@@ -15,6 +15,22 @@ What is already included:
 - Support for transforms, partial application, lambda aliases, parent operator, tuple bindings, wildcard/descendant traversal and higher-order composition
 - Parity tests that compare the PHP runtime against the `jsonata` npm package
 
+## Compatibility Matrix
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Parser and core expressions | Partial | Broad operator/path coverage, but parser recovery and exact AST parity are still being expanded. |
+| Paths and selectors | Partial | Includes `@`, `#`, `%`, `*`, `**`, projections, filters and tuple-aware traversal. |
+| Standard library functions | Partial | Large builtin surface is present, with upstream-themed parity coverage growing function by function. |
+| Signatures and coercions | Partial | Signature validation exists and now has dedicated upstream fixture coverage, but edge-case mismatch parity is still in progress. |
+| Regex | Partial | Core regex matching, splitting, replacing and `$match` are implemented, with upstream fixture coverage for representative cases. |
+| Datetime and formatting | Partial | `toMillis`, `fromMillis`, integer formatting/parsing and number formatting are available, but advanced picture/timezone parity remains incomplete. |
+| Higher-order functions and closures | Partial | Lambdas, closures, partial application and the common HOF helpers are implemented and covered by upstream fixtures. |
+| Transforms | Partial | Transform expressions are supported, with focused upstream parity fixtures for nested update scenarios. |
+| Error model | Partial | JSONata-style codes are present, but full 1:1 message/token/offset parity still needs deeper auditing. |
+
+The repository now includes a structured upstream-fixture parity layer in `tests/Unit/UpstreamParityTest.php`, grouped by theme (`functions`, `datetime`, `higher-order`, `paths`, `regex`, `transforms`, `errors`). It clones `jsonata-js/jsonata` into the system temp directory when needed so the test suite can exercise real upstream fixtures locally.
+
 ## Installation
 
 ```bash

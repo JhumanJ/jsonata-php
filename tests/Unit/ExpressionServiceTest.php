@@ -662,4 +662,43 @@ describe('ExpressionService', function () {
             'segment_index' => 1,
         ]);
     });
+
+    it('supports inline function path steps and parent-context path steps', function () {
+        expect($this->service->evaluate(
+            '[1..3].function($x,$y)<n-n:n>{$x+$y}(4)',
+            $this->context
+        ))->toBe([5, 6, 7]);
+
+        expect($this->service->evaluate(
+            'Account.Order.Product.( $parent := %; $parent.OrderID )',
+            $this->context
+        ))->toBe(['O1', 'O1']);
+
+        expect($this->service->evaluate(
+            'Account.Order.Product.[`Product Name`, %.OrderID]',
+            $this->context
+        ))->toBe(['A', 'O1', 'B', 'O1']);
+    });
+
+    it('preserves parent semantics across focus-bound sibling traversals', function () {
+        $library = json_decode(file_get_contents('/tmp/jsonata-upstream/test/test-suite/datasets/library.json'), true);
+
+        expect($this->service->evaluate(
+            'library.loans@$L.books@$B[$L.isbn=$B.isbn].{ "book": $B.title, "parent": $keys(%) }',
+            $library
+        ))->toBe([
+            ['book' => 'Structure and Interpretation of Computer Programs', 'parent' => ['books', 'loans', 'customers']],
+            ['book' => 'Compilers: Principles, Techniques, and Tools', 'parent' => ['books', 'loans', 'customers']],
+            ['book' => 'Structure and Interpretation of Computer Programs', 'parent' => ['books', 'loans', 'customers']],
+        ]);
+
+        expect($this->service->evaluate(
+            'library.loans@$L.books@$B[$L.isbn=$B.isbn].customers@$C[$C.id=$L.customer].{ "book": $B.title, "customer": $C.name, "grandparent": $keys(%.%) }',
+            $library
+        ))->toBe([
+            ['book' => 'Structure and Interpretation of Computer Programs', 'customer' => 'Joe Doe', 'grandparent' => 'library'],
+            ['book' => 'Compilers: Principles, Techniques, and Tools', 'customer' => 'Jason Arthur', 'grandparent' => 'library'],
+            ['book' => 'Structure and Interpretation of Computer Programs', 'customer' => 'Jason Arthur', 'grandparent' => 'library'],
+        ]);
+    });
 });

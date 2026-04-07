@@ -121,6 +121,10 @@ trait RegistersCollectionBuiltins
                 $items = $evaluator->toSequence($arguments[0] ?? null);
                 $callback = $arguments[1] ?? null;
 
+                if ($items === []) {
+                    return $evaluator->collapseSequence([]);
+                }
+
                 $matches = [];
                 if ($callback instanceof Closure) {
                     foreach ($items as $index => $item) {

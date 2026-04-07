@@ -14,7 +14,8 @@ describe('Parser', function () {
 
         expect($ast['type'])->toBe('object');
         expect($ast['pairs'])->toHaveCount(1);
-        expect($ast['pairs'][0]['key'])->toBe('label');
+        expect($ast['pairs'][0]['key']['type'])->toBe('literal');
+        expect($ast['pairs'][0]['key']['value'])->toBe('label');
         expect($ast['pairs'][0]['value']['type'])->toBe('binary');
         expect($ast['pairs'][0]['value']['operator'])->toBe('&');
     });
@@ -80,9 +81,10 @@ describe('Parser', function () {
             $lexer->tokenize('($x := [1,2,3]; $x ~> $sum())')
         );
 
-        expect($sequenceAst['type'])->toBe('sequence');
-        expect($sequenceAst['expressions'][0]['type'])->toBe('assignment');
-        expect($sequenceAst['expressions'][1]['operator'])->toBe('~>');
+        expect($sequenceAst['type'])->toBe('grouping');
+        expect($sequenceAst['expression']['type'])->toBe('sequence');
+        expect($sequenceAst['expression']['expressions'][0]['type'])->toBe('assignment');
+        expect($sequenceAst['expression']['expressions'][1]['operator'])->toBe('~>');
     });
 
     it('parses regex literals as literal primary expressions', function () {

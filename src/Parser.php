@@ -58,13 +58,12 @@ class Parser
         }
 
         $consequent = $this->parseExpression($stream);
-        $stream->expect(':');
 
         return [
             'type' => 'conditional',
             'test' => $expression,
             'consequent' => $consequent,
-            'alternate' => $this->parseExpression($stream),
+            'alternate' => $stream->match(':') ? $this->parseExpression($stream) : null,
         ];
     }
 
@@ -404,19 +403,14 @@ class Parser
                         'type' => 'parent',
                         'target' => $expression,
                     ];
-                } elseif ($stream->match('operator', '*')) {
-                    $expression = [
-                        'type' => 'wildcard',
-                        'target' => $expression,
-                    ];
-                } elseif ($stream->match('operator', '%')) {
-                    $expression = [
-                        'type' => 'parent',
-                        'target' => $expression,
-                    ];
                 } elseif ($stream->match('operator', '**')) {
                     $expression = [
                         'type' => 'descendant',
+                        'target' => $expression,
+                    ];
+                } elseif ($stream->match('operator', '*')) {
+                    $expression = [
+                        'type' => 'wildcard',
                         'target' => $expression,
                     ];
                 } elseif ($stream->match('operator', '%')) {
@@ -429,6 +423,16 @@ class Parser
                         'type' => 'object_map',
                         'target' => $expression,
                         'object' => $this->parseObjectLiteral($stream),
+                    ];
+                } elseif (
+                    $stream->check('(')
+                    || $stream->check('[')
+                    || $stream->check('keyword', 'function')
+                ) {
+                    $expression = [
+                        'type' => 'path_step',
+                        'target' => $expression,
+                        'step' => $this->parsePostfix($stream),
                     ];
                 } else {
                     $property = $stream->expectAny(['identifier', 'variable', 'string']);
@@ -560,7 +564,18 @@ class Parser
         $token = $stream->peek();
 
         return match ($token['type']) {
-            'string', 'number', 'boolean', 'null', 'regex' => [
+            'string' => (
+                $stream->peek(1)['type'] ?? null
+            ) === '.'
+                ? [
+                    'type' => 'identifier',
+                    'name' => $stream->advance()['value'],
+                ]
+                : [
+                    'type' => 'literal',
+                    'value' => $stream->advance()['value'],
+                ],
+            'number', 'boolean', 'null', 'regex' => [
                 'type' => 'literal',
                 'value' => $stream->advance()['value'],
             ],
@@ -586,6 +601,10 @@ class Parser
             'operator' => match ($token['value']) {
                 '*', '**' => [
                     'type' => $stream->advance()['value'] === '*' ? 'wildcard_context' : 'descendant_context',
+                ],
+                '%' => [
+                    'type' => 'parent_context',
+                    'position' => $stream->advance()['position'],
                 ],
                 '|' => $this->parseTransformExpression($stream),
                 default => throw new EvaluationException(
@@ -636,11 +655,11 @@ class Parser
 
         if (! $stream->check('}')) {
             do {
-                $keyToken = $stream->expectAny(['string', 'identifier']);
+                $keyExpression = $this->parseExpression($stream);
                 $stream->expect(':');
 
                 $pairs[] = [
-                    'key' => (string) $keyToken['value'],
+                    'key' => $keyExpression,
                     'value' => $this->parseExpression($stream),
                 ];
             } while ($stream->match(','));
@@ -660,10 +679,26 @@ class Parser
     private function parseGroupedExpression(TokenStream $stream): array
     {
         $stream->expect('(');
+
+        if ($stream->check(')')) {
+            $stream->expect(')');
+
+            return [
+                'type' => 'grouping',
+                'expression' => [
+                    'type' => 'sequence',
+                    'expressions' => [],
+                ],
+            ];
+        }
+
         $expression = $this->parseExpression($stream);
         $stream->expect(')');
 
-        return $expression;
+        return [
+            'type' => 'grouping',
+            'expression' => $expression,
+        ];
     }
 
     /**
@@ -683,6 +718,7 @@ class Parser
         }
 
         $stream->expect(')');
+        $signature = $stream->check('operator', '<', true) ? $this->parseFunctionSignature($stream) : null;
         $stream->expect('{');
         $body = $this->parseExpression($stream);
         $stream->expect('}');
@@ -690,8 +726,29 @@ class Parser
         return [
             'type' => 'function',
             'parameters' => $parameters,
+            'signature' => $signature,
             'body' => $body,
         ];
+    }
+
+    private function parseFunctionSignature(TokenStream $stream): string
+    {
+        $signature = '';
+        $depth = 0;
+
+        do {
+            $token = $stream->advance();
+            $value = (string) ($token['value'] ?? $token['type']);
+            $signature .= $value;
+
+            if ($token['type'] === 'operator' && $token['value'] === '<') {
+                $depth++;
+            } elseif ($token['type'] === 'operator' && $token['value'] === '>') {
+                $depth--;
+            }
+        } while ($depth > 0 && ! $stream->check('eof'));
+
+        return $signature;
     }
 
     /**
@@ -753,10 +810,43 @@ class Parser
      */
     private function isSubscriptExpression(array $expression): bool
     {
-        if (($expression['type'] ?? null) !== 'literal') {
-            return false;
+        return match ($expression['type'] ?? null) {
+            'literal' => is_int($expression['value']) || is_float($expression['value']) || is_string($expression['value']),
+            'unary' => ($expression['operator'] ?? null) === '-'
+                && ($expression['argument']['type'] ?? null) === 'literal'
+                && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),
+            'array' => $expression['items'] !== [] && $this->allSelectorItems($expression['items']),
+            'binary' => in_array($expression['operator'] ?? null, ['+', '-', '*', '/', '%'], true),
+            default => false,
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $expression
+     */
+    private function isSubscriptSelectorItem(array $expression): bool
+    {
+        return match ($expression['type'] ?? null) {
+            'literal' => is_int($expression['value']) || is_float($expression['value']) || is_bool($expression['value']),
+            'unary' => ($expression['operator'] ?? null) === '-'
+                && ($expression['argument']['type'] ?? null) === 'literal'
+                && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),
+            'binary' => ($expression['operator'] ?? null) === '..',
+            default => false,
+        };
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $items
+     */
+    private function allSelectorItems(array $items): bool
+    {
+        foreach ($items as $item) {
+            if (! $this->isSubscriptSelectorItem($item)) {
+                return false;
+            }
         }
 
-        return is_int($expression['value']);
+        return true;
     }
 }

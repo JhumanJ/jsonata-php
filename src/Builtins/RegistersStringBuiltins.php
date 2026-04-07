@@ -15,21 +15,45 @@ trait RegistersStringBuiltins
     {
         return [
             $this->builtin('string', fn (array $arguments): string => $evaluator->stringifyPublic($arguments[0] ?? null), '<x-b?:s>'),
-            $this->builtin('join', function (array $arguments) use ($evaluator): string {
+            $this->builtin('join', function (array $arguments) use ($evaluator): ?string {
+                if (! array_key_exists(0, $arguments) || $arguments[0] === null) {
+                    return null;
+                }
+
                 $values = array_map(
                     fn (mixed $value): string => $evaluator->stringifyPublic($value),
-                    $evaluator->toSequence($arguments[0] ?? null)
+                    $evaluator->toSequence($arguments[0])
                 );
 
                 return implode($evaluator->stringifyPublic($arguments[1] ?? ''), $values);
             }, '<a<s>s?:s>'),
-            $this->builtin('length', fn (array $arguments): int => mb_strlen($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:n>'),
+            $this->builtin('length', fn (array $arguments): int => count($this->stringToArray($evaluator->stringifyPublic($arguments[0] ?? ''))), '<s-:n>'),
             $this->builtin('substring', function (array $arguments) use ($evaluator): string {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
                 $start = (int) ($arguments[1] ?? 0);
                 $length = array_key_exists(2, $arguments) ? (int) $arguments[2] : null;
+                $characters = $this->stringToArray($value);
+                $characterCount = count($characters);
 
-                return $length === null ? mb_substr($value, $start) : mb_substr($value, $start, $length);
+                if ($characterCount + $start < 0) {
+                    $start = 0;
+                }
+
+                $startIndex = $start >= 0 ? $start : max(0, $characterCount + $start);
+
+                if ($length !== null) {
+                    if ($length <= 0) {
+                        return '';
+                    }
+
+                    $endIndex = $start >= 0
+                        ? $start + $length
+                        : max(0, $characterCount + $start + $length);
+
+                    return implode('', array_slice($characters, $startIndex, max(0, $endIndex - $startIndex)));
+                }
+
+                return implode('', array_slice($characters, $startIndex));
             }, '<s-nn?:s>'),
             $this->builtin('substringBefore', function (array $arguments) use ($evaluator): string {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
@@ -47,15 +71,19 @@ trait RegistersStringBuiltins
             }, '<s-s:s>'),
             $this->builtin('lowercase', fn (array $arguments): string => mb_strtolower($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),
             $this->builtin('uppercase', fn (array $arguments): string => mb_strtoupper($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),
-            $this->builtin('trim', fn (array $arguments): string => trim($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),
+            $this->builtin('trim', function (array $arguments) use ($evaluator): string {
+                $value = $evaluator->stringifyPublic($arguments[0] ?? '');
+                $value = preg_replace('/[ \t\n\r]+/u', ' ', $value) ?? $value;
+
+                return trim($value, ' ');
+            }, '<s-:s>'),
             $this->builtin('pad', function (array $arguments) use ($evaluator): string {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
                 $width = (int) ($arguments[1] ?? 0);
                 $character = $evaluator->stringifyPublic($arguments[2] ?? ' ');
-                $padding = max(0, abs($width) - mb_strlen($value));
-                $repeat = str_repeat($character === '' ? ' ' : mb_substr($character, 0, 1), $padding);
+                $character = $character === '' ? ' ' : $character;
 
-                return $width < 0 ? $repeat.$value : $value.$repeat;
+                return $this->support->padString($value, $width, $character);
             }, '<s-ns?:s>'),
             $this->builtin('contains', function (array $arguments) use ($evaluator): bool {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
@@ -63,6 +91,15 @@ trait RegistersStringBuiltins
 
                 if ($this->isRegexLiteral($search)) {
                     return preg_match($this->toPregPattern($search), $value) === 1;
+                }
+
+                if (! is_string($search)) {
+                    throw new EvaluationException(
+                        'Error T0410: Argument 2 does not match function signature <s-(sf):b>.',
+                        'T0410',
+                        0,
+                        ['index' => 2, 'value' => $search]
+                    );
                 }
 
                 $search = $evaluator->stringifyPublic($search);
@@ -231,5 +268,13 @@ trait RegistersStringBuiltins
         }
 
         return $result.substr($value, $cursor);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function stringToArray(string $value): array
+    {
+        return preg_split('//u', $value, -1, PREG_SPLIT_NO_EMPTY) ?: [];
     }
 }

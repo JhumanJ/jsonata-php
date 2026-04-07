@@ -13,18 +13,6 @@ trait RegistersDatetimeBuiltins
     protected function datetimeBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
     {
         return [
-            $this->builtin('formatInteger', function (array $arguments): string {
-                $value = (int) $this->toNumber($arguments[0] ?? null);
-                $picture = (string) ($arguments[1] ?? '');
-
-                return $this->formatInteger($value, $picture);
-            }, '<n-s:s>'),
-            $this->builtin('parseInteger', function (array $arguments) use ($evaluator): int {
-                $value = $evaluator->stringifyPublic($arguments[0] ?? '');
-                $picture = (string) ($arguments[1] ?? '');
-
-                return $this->parseInteger($value, $picture);
-            }, '<s-s:n>'),
             $this->builtin('toMillis', function (array $arguments) use ($evaluator): ?int {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
 

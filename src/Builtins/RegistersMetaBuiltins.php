@@ -39,7 +39,11 @@ trait RegistersMetaBuiltins
                 );
             }, '<bs?:x>'),
             $this->builtin('eval', function (array $arguments, mixed $context) use ($evaluator): mixed {
-                $expression = (string) ($arguments[0] ?? '');
+                if (! array_key_exists(0, $arguments) || $arguments[0] === null) {
+                    return null;
+                }
+
+                $expression = (string) $arguments[0];
                 $focus = $arguments[1] ?? $context;
 
                 try {

@@ -3,6 +3,7 @@
 namespace JsonataPhp;
 
 use Closure;
+use JsonataPhp\Builtins\Signature;
 use stdClass;
 
 class Evaluator
@@ -19,21 +20,43 @@ class Evaluator
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $rootContext
      */
-    public function evaluate(array $ast, array $rootContext): mixed
+    /**
+     * @param  array<string, mixed>  $bindings
+     */
+    public function evaluate(array $ast, array $rootContext, array $bindings = []): mixed
     {
-        return $this->evaluateWithContext($ast, $rootContext, $rootContext);
+        return $this->evaluateWithContext($ast, $rootContext, $rootContext, $bindings);
     }
 
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $rootContext
+     * @param  array<string, mixed>  $bindings
      */
-    public function evaluateWithContext(array $ast, mixed $context, array $rootContext): mixed
+    public function evaluateWithContext(array $ast, mixed $context, array $rootContext, array $bindings = []): mixed
     {
-        $environment = $this->functions->defaultEnvironment($this, $rootContext);
+        $environment = [
+            ...$this->functions->defaultEnvironment($this, $rootContext),
+            ...$this->normalizeBindings($bindings),
+        ];
         $result = $this->evaluateAst($ast, $context, $environment, $rootContext);
 
         return $this->isMissing($result) ? null : $this->unwrapTuples($result);
+    }
+
+    /**
+     * @param  array<string, mixed>  $bindings
+     * @return array<string, mixed>
+     */
+    private function normalizeBindings(array $bindings): array
+    {
+        $environment = [];
+
+        foreach ($bindings as $name => $value) {
+            $environment[str_starts_with($name, '$') ? $name : '$'.$name] = $value;
+        }
+
+        return $environment;
     }
 
     public function isMissing(mixed $value): bool
@@ -45,6 +68,15 @@ class Evaluator
     {
         if ($this->isMissing($value)) {
             return null;
+        }
+
+        return $this->unwrapTuples($value);
+    }
+
+    public function normalizePreservingMissingPublic(mixed $value): mixed
+    {
+        if ($this->isMissing($value)) {
+            return $value;
         }
 
         return $this->unwrapTuples($value);
@@ -94,6 +126,7 @@ class Evaluator
             'bind' => $this->evaluateBind($ast, $context, $environment, $rootContext),
             'sequence' => $this->evaluateSequence($ast, $context, $environment, $rootContext),
             'assignment' => $this->evaluateAssignment($ast, $context, $environment, $rootContext),
+            'grouping' => $this->evaluateAst($ast['expression'], $context, $environment, $rootContext),
             'conditional' => $this->evaluateConditional($ast, $context, $environment, $rootContext),
             'unary' => $this->evaluateUnary($ast, $context, $environment, $rootContext),
             'binary' => $this->evaluateBinary($ast, $context, $environment, $rootContext),
@@ -101,6 +134,7 @@ class Evaluator
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
                 (string) $ast['name']
             ),
+            'path_step' => $this->evaluatePathStep($ast, $context, $environment, $rootContext),
             'wildcard' => $this->evaluateWildcard(
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
             ),
@@ -109,10 +143,12 @@ class Evaluator
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
             ),
             'descendant_context' => $this->evaluateDescendant($context),
+            'parent_context' => $this->evaluateParentContext($ast, $context),
             'parent' => $this->evaluateParent($ast, $context, $environment, $rootContext),
             'subscript' => $this->accessSubscript(
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
-                $this->evaluateAst($ast['index'], $context, $environment, $rootContext)
+                $this->evaluateAst($ast['index'], $context, $environment, $rootContext),
+                ($ast['target']['type'] ?? null) !== 'grouping'
             ),
             'filter' => $this->filterSequence($ast, $context, $environment, $rootContext),
             'sort' => $this->evaluateSort($ast, $context, $environment, $rootContext),
@@ -216,6 +252,10 @@ class Evaluator
             return $this->evaluateAst($ast['consequent'], $context, $environment, $rootContext);
         }
 
+        if (($ast['alternate'] ?? null) === null) {
+            return $this->missingValue;
+        }
+
         return $this->evaluateAst($ast['alternate'], $context, $environment, $rootContext);
     }
 
@@ -294,7 +334,22 @@ class Evaluator
 
         foreach ($ast['items'] as $item) {
             $value = $this->evaluateAst($item, $context, $environment, $rootContext);
-            $items[] = $this->isMissing($value) ? null : $value;
+
+            if ($this->isMissing($value)) {
+                $items[] = null;
+
+                continue;
+            }
+
+            if (is_array($value) && array_is_list($value) && ($item['type'] ?? null) !== 'array') {
+                foreach ($value as $nestedValue) {
+                    $items[] = $this->tupleValue($nestedValue);
+                }
+
+                continue;
+            }
+
+            $items[] = $this->tupleValue($value);
         }
 
         return $items;
@@ -302,13 +357,7 @@ class Evaluator
 
     private function resolveIdentifier(string $name, mixed $context): mixed
     {
-        $context = $this->tupleValue($context);
-
-        if (is_array($context) && array_key_exists($name, $context)) {
-            return $context[$name];
-        }
-
-        return $this->missingValue;
+        return $this->accessProperty($context, $name);
     }
 
     private function accessProperty(mixed $target, string $name): mixed
@@ -318,10 +367,28 @@ class Evaluator
         }
 
         if ($this->isTuple($target)) {
-            return $this->wrapTupleResult(
-                $this->accessProperty($this->tupleValue($target), $name),
-                $this->tupleBindings($target)
-            );
+            $direct = $this->accessProperty($this->tupleValue($target), $name);
+
+            if (! $this->isMissing($direct)) {
+                return $this->wrapTupleResult(
+                    $direct,
+                    $this->tupleBindings($target),
+                    $target
+                );
+            }
+
+            $lookupParent = $this->tupleLookupParent($target);
+
+            if ($lookupParent !== null) {
+                return $this->wrapTupleResult(
+                    $this->accessProperty($lookupParent, $name),
+                    $this->tupleBindings($target),
+                    $lookupParent,
+                    $lookupParent
+                );
+            }
+
+            return $this->missingValue;
         }
 
         if ($name === '$') {
@@ -348,13 +415,13 @@ class Evaluator
         }
 
         if (is_array($target) && array_key_exists($name, $target)) {
-            return $this->wrapTupleResult($target[$name], []);
+            return $this->wrapTupleResult($target[$name], [], $target);
         }
 
         return $this->missingValue;
     }
 
-    private function accessSubscript(mixed $target, mixed $index): mixed
+    private function accessSubscript(mixed $target, mixed $index, bool $allowParentDistribution = true): mixed
     {
         if ($this->isMissing($target) || $target === null) {
             return $this->missingValue;
@@ -362,23 +429,86 @@ class Evaluator
 
         if ($this->isTuple($target)) {
             return $this->wrapTupleResult(
-                $this->accessSubscript($this->tupleValue($target), $index),
-                $this->tupleBindings($target)
+                $this->accessSubscript($this->tupleValue($target), $index, $allowParentDistribution),
+                $this->tupleBindings($target),
+                $target
             );
         }
 
-        if (is_int($index) && is_array($target) && array_is_list($target)) {
-            return array_key_exists($index, $target)
-                ? $this->wrapTupleResult($target[$index], [])
+        if ($this->isNumericSelector($index) && is_array($target) && array_is_list($target)) {
+            if ($allowParentDistribution && $this->isParentTrackedSequence($target)) {
+                return $this->selectFromParentTrackedSequence($target, $this->normalizeNumericSelector($index));
+            }
+
+            $resolvedIndex = $this->normalizeNumericSelector($index);
+            $resolvedIndex = $resolvedIndex < 0 ? count($target) + $resolvedIndex : $resolvedIndex;
+
+            return array_key_exists($resolvedIndex, $target)
+                ? $this->wrapTupleResult($target[$resolvedIndex], [])
                 : $this->missingValue;
         }
 
         // JSONata allows indexing into a singleton sequence after a path step
         // has already collapsed a one-item array into its only value.
-        if (is_int($index)) {
-            return $index === 0
+        if ($this->isNumericSelector($index)) {
+            $resolvedIndex = $this->normalizeNumericSelector($index);
+
+            return $resolvedIndex === 0 || $resolvedIndex === -1
                 ? $this->wrapTupleResult($target, [])
                 : $this->missingValue;
+        }
+
+        if (is_array($index) && array_is_list($index) && is_array($target) && array_is_list($target)) {
+            $selectors = $this->flattenSubscriptIndexes($index);
+            $hasNumericSelector = false;
+            $hasNonNumericSelector = false;
+            $numericIndexes = [];
+
+            foreach ($selectors as $selector) {
+                if ($this->isNumericSelector($selector)) {
+                    $hasNumericSelector = true;
+                    $resolvedIndex = $this->normalizeNumericSelector($selector);
+                    $numericIndexes[] = $resolvedIndex < 0 ? count($target) + $resolvedIndex : $resolvedIndex;
+
+                    continue;
+                }
+
+                $hasNonNumericSelector = true;
+            }
+
+            if ($hasNumericSelector && $hasNonNumericSelector) {
+                return $this->wrapTupleResult($target, []);
+            }
+
+            if (! $hasNumericSelector) {
+                return $this->missingValue;
+            }
+
+            $selected = [];
+            $selectedIndexes = array_values(array_unique(array_filter(
+                $numericIndexes,
+                static fn (mixed $candidate): bool => is_int($candidate) && $candidate >= 0
+            )));
+
+            if ($allowParentDistribution && $this->isParentTrackedSequence($target)) {
+                foreach ($selectedIndexes as $selectedIndex) {
+                    $value = $this->selectFromParentTrackedSequence($target, $selectedIndex);
+
+                    if (! $this->isMissing($value)) {
+                        $selected[] = $value;
+                    }
+                }
+
+                return $this->collapseSequence($selected);
+            }
+
+            foreach ($target as $position => $item) {
+                if (in_array($position, $selectedIndexes, true)) {
+                    $selected[] = $this->wrapTupleResult($item, []);
+                }
+            }
+
+            return $this->collapseSequence($selected);
         }
 
         if (is_string($index) && is_array($target) && array_key_exists($index, $target)) {
@@ -386,6 +516,120 @@ class Evaluator
         }
 
         return $this->missingValue;
+    }
+
+    private function isNumericSelector(mixed $value): bool
+    {
+        return is_int($value) || is_float($value);
+    }
+
+    private function normalizeNumericSelector(int|float $value): int
+    {
+        return (int) $value;
+    }
+
+    /**
+     * @param  array<int, mixed>  $target
+     */
+    private function isParentTrackedSequence(array $target): bool
+    {
+        foreach ($target as $item) {
+            if ($this->isTuple($item) && $this->tupleParent($item) !== null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<int, mixed>  $target
+     */
+    private function selectFromParentTrackedSequence(array $target, int $index): mixed
+    {
+        $selected = [];
+
+        foreach ($this->groupParentTrackedSequence($target) as $group) {
+            $resolvedIndex = $index < 0 ? count($group) + $index : $index;
+
+            if (array_key_exists($resolvedIndex, $group)) {
+                $selected[] = $group[$resolvedIndex];
+            }
+        }
+
+        return $this->collapseSequence($selected);
+    }
+
+    /**
+     * @param  array<int, mixed>  $target
+     * @return array<int, array<int, mixed>>
+     */
+    private function groupParentTrackedSequence(array $target): array
+    {
+        $groups = [];
+        $currentGroup = [];
+        $currentParent = null;
+        $hasCurrentParent = false;
+
+        foreach ($target as $item) {
+            if (! $this->isTuple($item) || $this->tupleParent($item) === null) {
+                if ($currentGroup !== []) {
+                    $groups[] = $currentGroup;
+                    $currentGroup = [];
+                    $hasCurrentParent = false;
+                    $currentParent = null;
+                }
+
+                $groups[] = [$item];
+
+                continue;
+            }
+
+            $parent = $this->tupleParent($item);
+
+            if (! $hasCurrentParent || $parent != $currentParent) {
+                if ($currentGroup !== []) {
+                    $groups[] = $currentGroup;
+                }
+
+                $currentGroup = [$item];
+                $currentParent = $parent;
+                $hasCurrentParent = true;
+
+                continue;
+            }
+
+            $currentGroup[] = $item;
+        }
+
+        if ($currentGroup !== []) {
+            $groups[] = $currentGroup;
+        }
+
+        return $groups;
+    }
+
+    /**
+     * @param  array<int, mixed>  $indexes
+     * @return array<int, mixed>
+     */
+    private function flattenSubscriptIndexes(array $indexes): array
+    {
+        $flattened = [];
+
+        foreach ($indexes as $index) {
+            if (is_array($index) && array_is_list($index)) {
+                foreach ($this->flattenSubscriptIndexes($index) as $nested) {
+                    $flattened[] = $nested;
+                }
+
+                continue;
+            }
+
+            $flattened[] = $index;
+        }
+
+        return $flattened;
     }
 
     private function evaluateWildcard(mixed $target): mixed
@@ -449,7 +693,8 @@ class Evaluator
 
         if (is_array($target) && array_is_list($target)) {
             foreach ($target as $item) {
-                $this->collectDescendants($item, $results, true, $item);
+                $value = $this->isTuple($item) ? $this->tupleValue($item) : $item;
+                $this->collectDescendants($value, $results, true, $value);
             }
         } else {
             $this->collectDescendants($target, $results, true, $target);
@@ -463,11 +708,107 @@ class Evaluator
      * @param  array<string, mixed>  $environment
      * @param  array<string, mixed>  $rootContext
      */
+    private function evaluatePathStep(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    {
+        $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
+        $results = [];
+
+        foreach ($this->toSequence($target) as $item) {
+            $value = match ($ast['step']['type'] ?? null) {
+                'call' => $this->evaluatePathStepCall($ast['step'], $item, $environment, $rootContext),
+                'partial' => $this->evaluateChain($ast['step'], $item, $item, $environment, $rootContext),
+                default => $this->evaluateAst($ast['step'], $item, $environment, $rootContext),
+            };
+
+            if ($this->isMissing($value)) {
+                continue;
+            }
+
+            if (is_array($value) && array_is_list($value)) {
+                foreach ($value as $nestedValue) {
+                    $results[] = $nestedValue;
+                }
+
+                continue;
+            }
+
+            $results[] = $value;
+        }
+
+        return $this->collapseSequence($results);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     * @param  array<string, mixed>  $rootContext
+     */
+    private function evaluatePathStepCall(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    {
+        $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
+
+        if (! $callee instanceof Closure) {
+            throw new EvaluationException(
+                'Error T1006: Attempted to call a non-function value.',
+                'T1006'
+            );
+        }
+
+        $arguments = [];
+        foreach ($ast['arguments'] as $argument) {
+            $arguments[] = $this->normalizePreservingMissingPublic(
+                $this->evaluateAst($argument, $context, $environment, $rootContext)
+            );
+        }
+
+        if (count($arguments) < $this->functions->functionArity($callee)) {
+            array_unshift($arguments, $this->normalizePreservingMissingPublic($this->tupleValue($context)));
+        }
+
+        return $callee($arguments, $context);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     * @param  array<string, mixed>  $rootContext
+     */
     private function evaluateParent(array $ast, mixed $context, array &$environment, array $rootContext): mixed
     {
-        $parents = $this->collectParentValues($ast['target'], $context, $environment, $rootContext);
+        $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
+        $parents = [];
+
+        foreach ($this->toSequence($target) as $item) {
+            if (! $this->isTuple($item) || $this->tupleParent($item) === null) {
+                continue;
+            }
+
+            $parents[] = $this->tupleParent($item);
+        }
 
         return $this->collapseSequence($parents);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function evaluateParentContext(array $ast, mixed $context): mixed
+    {
+        if (! $this->isTuple($context) || $this->tupleParent($context) === null) {
+            throw new EvaluationException(
+                "Error S0217: The object representing the 'parent' cannot be derived from this expression",
+                'S0217',
+                (int) ($ast['position'] ?? 0)
+            );
+        }
+
+        $parent = $this->tupleParent($context);
+
+        return $this->wrapTupleResult(
+            $this->tupleValue($parent),
+            $this->tupleBindings($parent),
+            $this->tupleParentContextParent($context) ?? $this->tupleParent($parent)
+        );
     }
 
     /**
@@ -480,9 +821,13 @@ class Evaluator
     {
         return match ($ast['type']) {
             'identifier' => $this->expandParentMatches($context, $this->resolveIdentifier((string) $ast['name'], $context)),
+            'parent_context' => ($this->isTuple($context) && $this->tupleParent($context) !== null)
+                ? [$this->tupleParent($context)]
+                : [],
             'variable' => ($ast['name'] ?? null) === '$'
                 ? $this->expandParentMatches($context, $this->tupleValue($context))
                 : [],
+            'parent' => $this->collectNestedParentValues($ast, $context, $environment, $rootContext),
             'property' => $this->collectPropertyParentValues($ast, $context, $environment, $rootContext),
             'subscript' => $this->collectSubscriptParentValues($ast, $context, $environment, $rootContext),
             'wildcard' => $this->collectWildcardParentValues($ast, $context, $environment, $rootContext),
@@ -576,6 +921,28 @@ class Evaluator
     }
 
     /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     * @param  array<string, mixed>  $rootContext
+     * @return array<int, mixed>
+     */
+    private function collectNestedParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    {
+        $baseTarget = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
+        $parents = [];
+
+        foreach ($this->toSequence($baseTarget) as $item) {
+            if (! $this->isTuple($item) || $this->tupleParent($item) === null) {
+                continue;
+            }
+
+            $parents[] = $this->tupleParent($item);
+        }
+
+        return $parents;
+    }
+
+    /**
      * @return array<int, mixed>
      */
     private function expandParentMatches(mixed $parent, mixed $result): array
@@ -600,7 +967,7 @@ class Evaluator
             return;
         }
 
-        if ($includeSelf) {
+        if ($includeSelf && (! is_array($value) || ! array_is_list($value))) {
             $results[] = $this->wrapTupleResult($value, []);
         }
 
@@ -651,9 +1018,19 @@ class Evaluator
         $object = [];
 
         foreach ($ast['pairs'] as $pair) {
+            $keys = $this->toSequence(
+                $this->evaluateAst($pair['key'], $context, $environment, $rootContext)
+            );
             $value = $this->evaluateAst($pair['value'], $context, $environment, $rootContext);
             $value = $this->normalizeValuePublic($value);
-            $object[$pair['key']] = $this->isMissing($value) ? null : $value;
+
+            foreach ($keys as $key) {
+                if ($this->isMissing($key) || $key === null) {
+                    continue;
+                }
+
+                $object[$this->stringify($key)] = $this->isMissing($value) ? null : $value;
+            }
         }
 
         return $object;
@@ -713,14 +1090,19 @@ class Evaluator
     {
         $closure = function (array $arguments, mixed $callContext = null) use ($ast, $environment, $rootContext): mixed {
             $localEnvironment = $environment;
+            $effectiveContext = $callContext ?? $rootContext;
 
-            foreach ($ast['parameters'] as $index => $parameter) {
-                $localEnvironment[$parameter] = $arguments[$index] ?? null;
+            if (($ast['signature'] ?? null) !== null) {
+                $arguments = Signature::parse($ast['signature'])->validate($arguments, $effectiveContext, $this);
             }
 
-            $localContext = $callContext ?? $rootContext;
+            foreach ($ast['parameters'] as $index => $parameter) {
+                if (array_key_exists($index, $arguments)) {
+                    $localEnvironment[$parameter] = $arguments[$index];
+                }
+            }
 
-            return $this->evaluateAst($ast['body'], $localContext, $localEnvironment, $rootContext);
+            return $this->evaluateAst($ast['body'], $effectiveContext, $localEnvironment, $rootContext);
         };
 
         return $this->functions->registerFunctionArity($closure, count($ast['parameters']));
@@ -831,7 +1213,7 @@ class Evaluator
         $arguments = [];
 
         foreach ($ast['arguments'] as $argument) {
-            $arguments[] = $this->normalizeValuePublic(
+            $arguments[] = $this->normalizePreservingMissingPublic(
                 $this->evaluateAst($argument, $context, $environment, $rootContext)
             );
         }
@@ -888,10 +1270,10 @@ class Evaluator
                 );
             }
 
-            $arguments = [$this->normalizeValuePublic($input)];
+            $arguments = [$this->normalizePreservingMissingPublic($input)];
 
             foreach ($ast['arguments'] as $argument) {
-                $arguments[] = $this->normalizeValuePublic(
+                $arguments[] = $this->normalizePreservingMissingPublic(
                     $this->evaluateAst($argument, $context, $environment, $rootContext)
                 );
             }
@@ -909,7 +1291,7 @@ class Evaluator
                 );
             }
 
-            return $callee([$this->normalizeValuePublic($input)], $context);
+            return $callee([$this->normalizePreservingMissingPublic($input)], $context);
         }
 
         $callee = $this->evaluateAst($ast, $context, $environment, $rootContext);
@@ -921,7 +1303,7 @@ class Evaluator
             );
         }
 
-        return $callee([$this->normalizeValuePublic($input)], $context);
+        return $callee([$this->normalizePreservingMissingPublic($input)], $context);
     }
 
     private function composeClosures(Closure $left, Closure $right): Closure
@@ -1031,7 +1413,7 @@ class Evaluator
                 continue;
             }
 
-            $resolvedArguments[] = $this->normalizeValuePublic(
+            $resolvedArguments[] = $this->normalizePreservingMissingPublic(
                 $this->evaluateAst($argumentAst, $context, $environment, $rootContext)
             );
         }
@@ -1124,6 +1506,7 @@ class Evaluator
     {
         return match ($ast['type']) {
             'identifier' => $this->resolveTransformIdentifierPaths((string) $ast['name'], $root, $contextPath),
+            'grouping' => $this->resolveTransformPaths($ast['expression'], $root, $contextPath, $environment, $rootContext),
             'property' => $this->resolveTransformPropertyPaths($ast, $root, $contextPath, $environment, $rootContext),
             'wildcard' => $this->resolveTransformWildcardPaths($ast, $root, $contextPath, $environment, $rootContext),
             'descendant' => $this->resolveTransformDescendantPaths($ast, $root, $contextPath, $environment, $rootContext),
@@ -1703,7 +2086,13 @@ class Evaluator
             $bindings = $this->isTuple($item) ? $this->tupleBindings($item) : [];
             $value = $this->tupleValue($item);
             $bindings[(string) $ast['name']] = $ast['kind'] === 'focus' ? $value : $index;
-            $results[] = $this->makeTuple($value, $bindings);
+
+            $results[] = $this->makeTuple(
+                $value,
+                $bindings,
+                $this->tupleParent($item),
+                $ast['kind'] === 'focus' && $this->isTuple($item) ? $this->tupleParent($item) : null
+            );
         }
 
         return $this->collapseSequence($results);
@@ -1712,13 +2101,20 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $bindings
      */
-    private function makeTuple(mixed $value, array $bindings, mixed $parent = null): array
-    {
+    private function makeTuple(
+        mixed $value,
+        array $bindings,
+        mixed $parent = null,
+        mixed $lookupParent = null,
+        mixed $parentContextParent = null
+    ): array {
         return [
             '__jsonata_tuple' => true,
             'value' => $value,
             'bindings' => $bindings,
             'parent' => $parent,
+            'lookup_parent' => $lookupParent,
+            'parent_context_parent' => $parentContextParent,
         ];
     }
 
@@ -1743,6 +2139,16 @@ class Evaluator
         return $this->isTuple($value) ? ($value['parent'] ?? null) : null;
     }
 
+    private function tupleLookupParent(mixed $value): mixed
+    {
+        return $this->isTuple($value) ? ($value['lookup_parent'] ?? null) : null;
+    }
+
+    private function tupleParentContextParent(mixed $value): mixed
+    {
+        return $this->isTuple($value) ? ($value['parent_context_parent'] ?? null) : null;
+    }
+
     private function tupleValue(mixed $value): mixed
     {
         return $this->isTuple($value) ? $value['value'] : $value;
@@ -1751,8 +2157,12 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $bindings
      */
-    private function wrapTupleResult(mixed $value, array $bindings, mixed $parent = null): mixed
-    {
+    private function wrapTupleResult(
+        mixed $value,
+        array $bindings,
+        mixed $parent = null,
+        mixed $parentContextParent = null
+    ): mixed {
         if ($this->isMissing($value) || $value === null) {
             return $value;
         }
@@ -1764,7 +2174,7 @@ class Evaluator
                 $results[] = $this->makeTuple($this->tupleValue($item), [
                     ...$bindings,
                     ...$this->tupleBindings($item),
-                ], $parent ?? $this->tupleParent($item));
+                ], $parent ?? $this->tupleParent($item), $this->tupleLookupParent($item), $parentContextParent ?? $this->tupleParentContextParent($item));
             }
 
             return $this->collapseSequence($results);
@@ -1773,7 +2183,7 @@ class Evaluator
         return $this->makeTuple($this->tupleValue($value), [
             ...$bindings,
             ...$this->tupleBindings($value),
-        ], $parent ?? $this->tupleParent($value));
+        ], $parent ?? $this->tupleParent($value), $this->tupleLookupParent($value), $parentContextParent ?? $this->tupleParentContextParent($value));
     }
 
     private function unwrapTuples(mixed $value): mixed

@@ -82,7 +82,7 @@ class Signature
                         break;
                     }
 
-                    $parameters[$lastIndex]['regex'] .= $symbol;
+                    $parameters[$lastIndex]['regex'] .= $symbol === '+' ? '+?' : $symbol;
                     break;
                 case '(':
                     $endParen = self::findClosingBracket($definition, $position, '(', ')');
@@ -159,8 +159,10 @@ class Signature
                         );
                     }
                 } else {
-                    $validatedArguments[] = $argument;
-                    $argumentIndex++;
+                    if (array_key_exists($argumentIndex, $arguments)) {
+                        $validatedArguments[] = $argument;
+                        $argumentIndex++;
+                    }
                 }
 
                 continue;
@@ -169,7 +171,7 @@ class Signature
             foreach (str_split($match) as $singleSymbol) {
                 if (($parameter['type'] ?? null) === 'a') {
                     if ($singleSymbol === 'm') {
-                        $validatedArguments[] = null;
+                        $validatedArguments[] = $argument;
                         $argumentIndex++;
 
                         continue;

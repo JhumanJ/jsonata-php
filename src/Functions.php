@@ -58,8 +58,8 @@ class Functions
         foreach ($definitions as $definition) {
             $wrapper = function (array $arguments, mixed $context = null) use ($definition, $evaluator): mixed {
                 return $definition->invoke(
-                    array_map(fn (mixed $argument): mixed => $evaluator->normalizeValuePublic($argument), $arguments),
-                    $evaluator->normalizeValuePublic($context),
+                    $arguments,
+                    $context,
                     $evaluator
                 );
             };

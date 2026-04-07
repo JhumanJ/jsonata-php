@@ -65,7 +65,7 @@ class Lexer
                 continue;
             }
 
-            if ($character === '"' || $character === '\'') {
+            if ($character === '"' || $character === '\'' || $character === '`') {
                 $token = $this->readStringToken($expression, $offset, $character);
                 $tokens[] = $token;
                 $previousToken = $token;
@@ -233,7 +233,7 @@ class Lexer
                 $offset++;
 
                 return [
-                    'type' => 'string',
+                    'type' => $quote === '`' ? 'identifier' : 'string',
                     'value' => $buffer,
                     'position' => $position,
                 ];

@@ -29,12 +29,15 @@ class ExpressionService
 
     private readonly Evaluator $evaluator;
 
-    public function evaluate(string $expression, mixed $context): mixed
+    /**
+     * @param  array<string, mixed>  $bindings
+     */
+    public function evaluate(string $expression, mixed $context, array $bindings = []): mixed
     {
         $tokens = $this->lexer->tokenize($expression);
         $ast = $this->parser->parse($tokens);
         $rootContext = is_array($context) ? $context : ['value' => $context];
 
-        return $this->evaluator->evaluateWithContext($ast, $context, $rootContext);
+        return $this->evaluator->evaluateWithContext($ast, $context, $rootContext, $bindings);
     }
 }
