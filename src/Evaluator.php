@@ -373,6 +373,14 @@ class Evaluator
                 : $this->missingValue;
         }
 
+        // JSONata allows indexing into a singleton sequence after a path step
+        // has already collapsed a one-item array into its only value.
+        if (is_int($index)) {
+            return $index === 0
+                ? $this->wrapTupleResult($target, [])
+                : $this->missingValue;
+        }
+
         if (is_string($index) && is_array($target) && array_key_exists($index, $target)) {
             return $this->wrapTupleResult($target[$index], []);
         }

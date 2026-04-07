@@ -108,6 +108,7 @@ describe('Jsonata PHP and JS parity', function () {
         expect($phpResult)->toEqual($jsResult);
     })->with([
         'projection' => 'input.item.items.document_type',
+        'singleton subscript after collapsed path' => 'input.item.items[0].document_type',
         'filtered projection' => 'input.value[document_type = "requete-injonction" or document_type = "mise-en-demeure"].document',
         'map callback' => '$map(input.value[document_type != "other"], function($segment) { $segment.document.id })',
         'filter callback' => '$filter(input.value, function($segment) { $segment.document.id != "doc_b" }).document.id',

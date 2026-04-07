@@ -636,4 +636,30 @@ describe('ExpressionService', function () {
         ]);
         expect($source)->toBe(['items' => [['n' => 1]]]);
     });
+
+    it('supports subscripting singleton path results like the JS engine', function () {
+        $context = [
+            'input' => [
+                'index' => 0,
+                'item' => [
+                    'index' => 0,
+                    'items' => [
+                        ['document_type' => 'invoice', 'segment_index' => 1],
+                    ],
+                ],
+            ],
+        ];
+
+        expect($this->service->evaluate('input.item.items[0].document_type', $context))
+            ->toBe('invoice');
+
+        expect($this->service->evaluate(
+            '{"batch_index": input.index, "document_type": input.item.items[0].document_type, "segment_index": input.item.items[0].segment_index}',
+            $context
+        ))->toBe([
+            'batch_index' => 0,
+            'document_type' => 'invoice',
+            'segment_index' => 1,
+        ]);
+    });
 });
