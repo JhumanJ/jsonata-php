@@ -1,0 +1,41 @@
+{
+    "name": "jhumanj/jsonata-php",
+    "description": "A standalone PHP port of jsonata-js/jsonata extracted from Raydocs.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "jsonata",
+        "php",
+        "expression-language",
+        "raydocs"
+    ],
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.17",
+        "pestphp/pest": "^3.8",
+        "symfony/process": "^7.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "JsonataPhp\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JsonataPhp\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "lint": "vendor/bin/pint --test"
+    }
+}

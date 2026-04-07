@@ -1,0 +1,7 @@
+{
+  "name": "jsonata-php",
+  "private": true,
+  "devDependencies": {
+    "jsonata": "^2.1.0"
+  }
+}
