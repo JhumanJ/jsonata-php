@@ -15,17 +15,23 @@ What is already included:
 - Support for transforms, partial application, lambda aliases, parent operator, tuple bindings, wildcard/descendant traversal and higher-order composition
 - Parity tests that compare the PHP runtime against the `jsonata` npm package
 
+Recent parity improvements include:
+
+- correct precedence between assignment (`:=`) and conditional (`? :`) expressions inside grouped blocks
+- JS-aligned `$map()` singleton collapsing, which matters for object-producing callbacks
+- regression coverage for block-scoped lambda callbacks that bind locals and return projected objects
+
 ## Compatibility Matrix
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Parser and core expressions | Partial | Broad operator/path coverage, but parser recovery and exact AST parity are still being expanded. |
+| Parser and core expressions | Partial | Broad operator/path coverage, including recent fixes for assignment/conditional precedence inside grouped expressions, but parser recovery and exact AST parity are still being expanded. |
 | Paths and selectors | Partial | Includes `@`, `#`, `%`, `*`, `**`, projections, filters and tuple-aware traversal. |
 | Standard library functions | Partial | Large builtin surface is present, with upstream-themed parity coverage growing function by function. |
 | Signatures and coercions | Partial | Signature validation exists and now has dedicated upstream fixture coverage, but edge-case mismatch parity is still in progress. |
 | Regex | Partial | Core regex matching, splitting, replacing and `$match` are implemented, with upstream fixture coverage for representative cases. |
 | Datetime and formatting | Partial | `toMillis`, `fromMillis`, integer formatting/parsing and number formatting are available, but advanced picture/timezone parity remains incomplete. |
-| Higher-order functions and closures | Partial | Lambdas, closures, partial application and the common HOF helpers are implemented and covered by upstream fixtures. |
+| Higher-order functions and closures | Partial | Lambdas, closures, partial application and the common HOF helpers are implemented, including JS-aligned `$map()` behavior for singleton object results, with upstream and local parity coverage. |
 | Transforms | Partial | Transform expressions are supported, with focused upstream parity fixtures for nested update scenarios. |
 | Error model | Partial | JSONata-style codes are present, but full 1:1 message/token/offset parity still needs deeper auditing. |
 
