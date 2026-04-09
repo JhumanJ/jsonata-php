@@ -198,6 +198,71 @@ describe('ExpressionService', function () {
         ]);
     });
 
+    it('matches JS for map callbacks that bind locals and return objects from a block', function () {
+        $context = [
+            'workflow' => [
+                'successful_batches' => [
+                    [
+                        'batch_index' => 0,
+                        'batch_label' => 'batch-1',
+                        'document_count' => 3,
+                        'extracted_data' => [
+                            'btp_lignes_creance' => [
+                                'memo_name' => 'Memo Back-office',
+                                'creance_total' => 2243.8,
+                            ],
+                            'mise_en_demeure_periodicite' => [
+                                'periodicite_texte_a_copier' => 'du 01/01/2024 au 30/06/2025',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'input' => [
+                'meta' => [
+                    'iterated_count' => 1,
+                ],
+            ],
+            'json' => [
+                'meta' => [
+                    'iterated_count' => 1,
+                ],
+            ],
+            'node' => [],
+            'files' => [],
+            'documents' => [],
+            'vars' => [],
+        ];
+
+        $expression = <<<'JSONATA'
+(
+  $raw := function($field) {
+    $type($field) = "object" and $exists($field.value) ? $field.value : $field
+  };
+  $map(workflow.successful_batches, function($batch) {
+    (
+      $creance := $batch.extracted_data.btp_lignes_creance ? $batch.extracted_data.btp_lignes_creance : {};
+      $periodicite := $batch.extracted_data.mise_en_demeure_periodicite ? $batch.extracted_data.mise_en_demeure_periodicite : {};
+      {
+        "batch_number": $batch.batch_index + 1,
+        "batch_reference": $batch.batch_label,
+        "document_count": $batch.document_count,
+        "memo_name": $raw($creance.memo_name),
+        "creance_total": $raw($creance.creance_total),
+        "period_text": $raw($periodicite.periodicite_texte_a_copier)
+      }
+    )
+  })
+)
+JSONATA;
+
+        $phpResult = $this->service->evaluate($expression, $context);
+        $jsResult = jsonata_test_evaluate_with_local_js($expression, $context);
+
+        expect($jsResult['ok'])->toBeTrue();
+        expect($phpResult)->toEqual($jsResult['result']);
+    });
+
     it('throws a jsonata-style syntax error for invalid expressions', function () {
         expect(fn () => $this->service->evaluate('{', $this->context))
             ->toThrow(EvaluationException::class, 'Error S0203');

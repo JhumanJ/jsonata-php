@@ -87,6 +87,22 @@ describe('Parser', function () {
         expect($sequenceAst['expression']['expressions'][1]['operator'])->toBe('~>');
     });
 
+    it('parses assignment right-hand ternaries inside grouped sequences', function () {
+        $lexer = (jsonata_test_resolve(Lexer::class));
+        $parser = (jsonata_test_resolve(Parser::class));
+
+        $ast = $parser->parse(
+            $lexer->tokenize('($x := foo ? bar : baz; {"value": $x})')
+        );
+
+        expect($ast['type'])->toBe('grouping');
+        expect($ast['expression']['type'])->toBe('sequence');
+        expect($ast['expression']['expressions'][0]['type'])->toBe('assignment');
+        expect($ast['expression']['expressions'][0]['target']['name'])->toBe('$x');
+        expect($ast['expression']['expressions'][0]['value']['type'])->toBe('conditional');
+        expect($ast['expression']['expressions'][1]['type'])->toBe('object');
+    });
+
     it('parses regex literals as literal primary expressions', function () {
         $lexer = (jsonata_test_resolve(Lexer::class));
         $parser = (jsonata_test_resolve(Parser::class));

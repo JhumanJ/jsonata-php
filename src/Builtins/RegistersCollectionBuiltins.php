@@ -30,7 +30,7 @@ trait RegistersCollectionBuiltins
                     }
                 }
 
-                return $results;
+                return $evaluator->collapseSequence($results);
             }, '<af>'),
             $this->builtin('filter', function (array $arguments) use ($evaluator): mixed {
                 [$sequence, $callback] = $arguments;
