@@ -103,6 +103,33 @@ describe('Parser', function () {
         expect($ast['expression']['expressions'][1]['type'])->toBe('object');
     });
 
+    it('parses chained ternaries inside function bodies', function () {
+        $lexer = (jsonata_test_resolve(Lexer::class));
+        $parser = (jsonata_test_resolve(Parser::class));
+
+        $ast = $parser->parse(
+            $lexer->tokenize('(
+                $pick := function($left, $right){(
+                    $l := $left;
+                    $r := $right;
+                    $count($l) = 0 ? $r :
+                    $count($r) = 0 ? $l :
+                    []
+                )};
+                $pick([], [])
+            )')
+        );
+
+        expect($ast['type'])->toBe('grouping');
+        expect($ast['expression']['type'])->toBe('sequence');
+        expect($ast['expression']['expressions'][0]['type'])->toBe('assignment');
+        expect($ast['expression']['expressions'][0]['value']['type'])->toBe('function');
+        expect($ast['expression']['expressions'][0]['value']['body']['type'])->toBe('grouping');
+        expect($ast['expression']['expressions'][0]['value']['body']['expression']['type'])->toBe('sequence');
+        expect($ast['expression']['expressions'][0]['value']['body']['expression']['expressions'][2]['type'])->toBe('conditional');
+        expect($ast['expression']['expressions'][0]['value']['body']['expression']['expressions'][2]['alternate']['type'])->toBe('conditional');
+    });
+
     it('parses regex literals as literal primary expressions', function () {
         $lexer = (jsonata_test_resolve(Lexer::class));
         $parser = (jsonata_test_resolve(Parser::class));

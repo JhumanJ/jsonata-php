@@ -14,6 +14,16 @@ trait RegistersCollectionBuiltins
      */
     protected function collectionBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
     {
+        $preservesExplicitArray = static function (array $arguments): bool {
+            foreach ($arguments as $argument) {
+                if (is_array($argument) && array_is_list($argument)) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
         return [
             $this->builtin('map', function (array $arguments) use ($evaluator): mixed {
                 [$sequence, $callback] = $arguments;
@@ -45,19 +55,31 @@ trait RegistersCollectionBuiltins
                 return $evaluator->collapseSequence($results);
             }, '<af>'),
             $this->builtin('count', fn (array $arguments): int => count($evaluator->toSequence($arguments[0] ?? null)), '<a:n>'),
-            $this->builtin('append', function (array $arguments) use ($evaluator): mixed {
-                return $evaluator->collapseSequence([
+            $this->builtin('append', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
+                $result = [
                     ...$evaluator->toSequence($arguments[0] ?? null),
                     ...$evaluator->toSequence($arguments[1] ?? null),
-                ]);
+                ];
+
+                return $result === [] && $preservesExplicitArray($arguments)
+                    ? []
+                    : $evaluator->collapseSequence($result);
             }, '<xx:a>'),
-            $this->builtin('reverse', function (array $arguments) use ($evaluator): mixed {
-                return $evaluator->collapseSequence(array_reverse($evaluator->toSequence($arguments[0] ?? null)));
+            $this->builtin('reverse', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
+                $result = array_reverse($evaluator->toSequence($arguments[0] ?? null));
+
+                return $result === [] && $preservesExplicitArray($arguments)
+                    ? []
+                    : $evaluator->collapseSequence($result);
             }, '<a:a>'),
-            $this->builtin('distinct', function (array $arguments) use ($evaluator): mixed {
-                return $this->distinctValues($evaluator->toSequence($arguments[0] ?? null), $evaluator);
+            $this->builtin('distinct', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
+                $result = $this->distinctValues($evaluator->toSequence($arguments[0] ?? null), $evaluator);
+
+                return ($result === null || $evaluator->isMissing($result)) && $preservesExplicitArray($arguments)
+                    ? []
+                    : $result;
             }, '<x:x>'),
-            $this->builtin('sort', function (array $arguments) use ($evaluator): mixed {
+            $this->builtin('sort', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
                 $items = $evaluator->toSequence($arguments[0] ?? null);
                 $callback = $arguments[1] ?? null;
                 $sorted = $items;
@@ -69,7 +91,9 @@ trait RegistersCollectionBuiltins
                         return $decision ? 1 : -1;
                     });
 
-                    return $evaluator->collapseSequence($sorted);
+                    return $sorted === [] && $preservesExplicitArray($arguments)
+                        ? []
+                        : $evaluator->collapseSequence($sorted);
                 }
 
                 $types = array_unique(array_map(
@@ -92,7 +116,9 @@ trait RegistersCollectionBuiltins
                     return strcmp((string) $left, (string) $right);
                 });
 
-                return $evaluator->collapseSequence($sorted);
+                return $sorted === [] && $preservesExplicitArray($arguments)
+                    ? []
+                    : $evaluator->collapseSequence($sorted);
             }, '<af?:a>'),
             $this->builtin('zip', function (array $arguments): array {
                 $arrays = array_map(

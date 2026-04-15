@@ -57,13 +57,13 @@ class Parser
             return $expression;
         }
 
-        $consequent = $this->parseAssignment($stream);
+        $consequent = $this->parseConditional($stream);
 
         return [
             'type' => 'conditional',
             'test' => $expression,
             'consequent' => $consequent,
-            'alternate' => $stream->match(':') ? $this->parseAssignment($stream) : null,
+            'alternate' => $stream->match(':') ? $this->parseConditional($stream) : null,
         ];
     }
 

@@ -378,6 +378,70 @@ JSONATA;
         ]);
     });
 
+    it('supports chained ternaries inside function bodies', function () {
+        $result = $this->service->evaluate('(
+            $pick := function($left, $right){(
+                $l := $left;
+                $r := $right;
+                $count($l) = 0 ? $r :
+                $count($r) = 0 ? $l :
+                ["fallback"]
+            )};
+            {
+                "empty_left": $pick([], [1, 2]),
+                "empty_right": $pick([3], []),
+                "neither_empty": $pick([3], [4])
+            }
+        )', $this->context);
+
+        expect($result)->toBe([
+            'empty_left' => [1, 2],
+            'empty_right' => [3],
+            'neither_empty' => ['fallback'],
+        ]);
+    });
+
+    it('supports recursive helper calls inside path step projections', function () {
+        $result = $this->service->evaluate('(
+            $flatten := function($node, $prefix){
+                $type($node) = "array" ?
+                    $node.(
+                        $flatten($, $prefix)
+                    )
+                :
+                    [{($prefix): $string($node)}]
+            };
+            $flatten([1, 2], "value")
+        )', $this->context);
+
+        expect($result)->toBe([
+            ['value' => '1'],
+            ['value' => '2'],
+        ]);
+    });
+
+    it('matches jsonata-js for boolean stringification and explicit empty arrays', function () {
+        $result = $this->service->evaluate('{
+            "true_string": $string(true),
+            "false_string": $string(false),
+            "false_equals_null": false = null,
+            "count_empty_object_row": $count([{}]),
+            "append_empty": $append([], []),
+            "distinct_empty": $distinct([]),
+            "sort_empty": $sort([])
+        }', $this->context);
+
+        expect($result)->toBe([
+            'true_string' => 'true',
+            'false_string' => 'false',
+            'false_equals_null' => false,
+            'count_empty_object_row' => 1,
+            'append_empty' => [],
+            'distinct_empty' => [],
+            'sort_empty' => [],
+        ]);
+    });
+
     it('supports chain operators and grouped variable bindings', function () {
         expect($this->service->evaluate('"  Acme  " ~> $trim() ~> $lowercase()', $this->context))
             ->toBe('acme');

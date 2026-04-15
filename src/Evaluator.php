@@ -341,7 +341,12 @@ class Evaluator
                 continue;
             }
 
-            if (is_array($value) && array_is_list($value) && ($item['type'] ?? null) !== 'array') {
+            if (
+                is_array($value)
+                && array_is_list($value)
+                && ($item['type'] ?? null) !== 'array'
+                && ($item['type'] ?? null) !== 'object'
+            ) {
                 foreach ($value as $nestedValue) {
                     $items[] = $this->tupleValue($nestedValue);
                 }
@@ -1086,9 +1091,9 @@ class Evaluator
      * @param  array<string, mixed>  $environment
      * @param  array<string, mixed>  $rootContext
      */
-    private function createClosure(array $ast, array $environment, array $rootContext): Closure
+    private function createClosure(array $ast, array &$environment, array $rootContext): Closure
     {
-        $closure = function (array $arguments, mixed $callContext = null) use ($ast, $environment, $rootContext): mixed {
+        $closure = function (array $arguments, mixed $callContext = null) use ($ast, &$environment, $rootContext): mixed {
             $localEnvironment = $environment;
             $effectiveContext = $callContext ?? $rootContext;
 
@@ -1941,7 +1946,54 @@ class Evaluator
         $left = $this->unwrapTuples($left);
         $right = $this->unwrapTuples($right);
 
-        return $left == $right;
+        return $this->deepEquals($left, $right);
+    }
+
+    private function deepEquals(mixed $left, mixed $right): bool
+    {
+        if ($left === null || $right === null) {
+            return $left === $right;
+        }
+
+        if ((is_int($left) || is_float($left)) && (is_int($right) || is_float($right))) {
+            return $left == $right;
+        }
+
+        if (is_bool($left) || is_bool($right) || is_string($left) || is_string($right)) {
+            return $left === $right;
+        }
+
+        if (is_array($left) && is_array($right)) {
+            $leftIsList = array_is_list($left);
+            $rightIsList = array_is_list($right);
+
+            if ($leftIsList !== $rightIsList || count($left) !== count($right)) {
+                return false;
+            }
+
+            if ($leftIsList) {
+                foreach ($left as $index => $value) {
+                    if (! $this->deepEquals($value, $right[$index] ?? null)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            ksort($left);
+            ksort($right);
+
+            foreach ($left as $key => $value) {
+                if (! array_key_exists($key, $right) || ! $this->deepEquals($value, $right[$key])) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return $left === $right;
     }
 
     private function compareNumbers(mixed $left, mixed $right, string $operator): bool
@@ -2021,6 +2073,10 @@ class Evaluator
 
         if (is_string($value)) {
             return $value;
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
         }
 
         if (is_scalar($value)) {
