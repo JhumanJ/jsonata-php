@@ -546,6 +546,35 @@ JSONATA;
         ]);
     });
 
+    it('supports regex replacements with escaped slash literals', function () {
+        $result = $this->service->evaluate('(
+            $original := workflow.deposit_file.original_path;
+            $id := input.matches[0].groups[0].text;
+            {
+                "piece_path": $replace($original, /acte_[^\/]+\.pdf$/i, "piece_" & $id & ".pdf")
+            }
+        )', [
+            'workflow' => [
+                'deposit_file' => [
+                    'original_path' => '/tmp/uploads/acte_abc.pdf',
+                ],
+            ],
+            'input' => [
+                'matches' => [
+                    [
+                        'groups' => [
+                            ['text' => '123'],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        expect($result)->toBe([
+            'piece_path' => '/tmp/uploads/piece_123.pdf',
+        ]);
+    });
+
     it('supports dynamic current-time helpers', function () {
         $result = $this->service->evaluate('{
             "now": $now(),
