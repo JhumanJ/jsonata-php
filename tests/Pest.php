@@ -50,30 +50,17 @@ function jsonata_test_upstream_dir(): ?string
     $resolved = true;
 
     $configured = getenv('JSONATA_UPSTREAM_DIR');
-    if (is_string($configured) && $configured !== '' && is_dir($configured.'/test/test-suite')) {
+    if (is_string($configured) && $configured !== '' && is_dir($configured.'/test-suite')) {
         return $directory = $configured;
     }
 
-    $directory = sys_get_temp_dir().'/jsonata-upstream';
+    $directory = package_path('tests/fixtures/upstream-jsonata');
 
-    if (is_dir($directory.'/test/test-suite')) {
+    if (is_dir($directory.'/test-suite')) {
         return $directory;
     }
 
-    $process = new Process([
-        'git',
-        'clone',
-        '--depth',
-        '1',
-        'https://github.com/jsonata-js/jsonata.git',
-        $directory,
-    ], package_path('.'));
-
-    $process->run();
-
-    return $process->isSuccessful() && is_dir($directory.'/test/test-suite')
-        ? $directory
-        : null;
+    return null;
 }
 
 /**
@@ -94,7 +81,7 @@ function jsonata_test_upstream_datasets(): array
 
     $datasets = [];
 
-    foreach (glob($upstream.'/test/test-suite/datasets/*.json') ?: [] as $path) {
+    foreach (glob($upstream.'/test-suite/datasets/*.json') ?: [] as $path) {
         $datasets[basename($path, '.json')] = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
     }
 
@@ -102,11 +89,11 @@ function jsonata_test_upstream_datasets(): array
 }
 
 /**
- * @param  list<string>  $groups
+ * @param  list<string>|null  $groups
  * @param  list<string>  $allowedCases
  * @return array<string, array<string, mixed>>
  */
-function jsonata_test_upstream_cases(array $groups, array $allowedCases = []): array
+function jsonata_test_upstream_cases(?array $groups = null, array $allowedCases = []): array
 {
     $upstream = jsonata_test_upstream_dir();
     if ($upstream === null) {
@@ -114,12 +101,32 @@ function jsonata_test_upstream_cases(array $groups, array $allowedCases = []): a
     }
 
     $fixtures = [];
+    $groups ??= array_map(
+        'basename',
+        glob($upstream.'/test-suite/groups/*', GLOB_ONLYDIR) ?: []
+    );
+    sort($groups);
 
     foreach ($groups as $group) {
-        $directory = $upstream.'/test/test-suite/groups/'.$group;
+        $directory = $upstream.'/test-suite/groups/'.$group;
 
         foreach (glob($directory.'/*.json') ?: [] as $path) {
-            $decoded = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+            $caseId = $group.'/'.basename($path);
+
+            try {
+                $decoded = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException $exception) {
+                if ($allowedCases === [] || in_array($caseId, $allowedCases, true)) {
+                    $fixtures[$caseId] = [
+                        '_case_id' => $caseId,
+                        '_group' => $group,
+                        '_json_decode_error' => $exception->getMessage(),
+                    ];
+                }
+
+                continue;
+            }
+
             $cases = array_is_list($decoded) ? $decoded : [$decoded];
 
             foreach ($cases as $index => $case) {

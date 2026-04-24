@@ -274,6 +274,36 @@ function jsonata_upstream_theme_cases(string $theme): array
     );
 }
 
+/**
+ * @return array<string, true>
+ */
+function jsonata_upstream_enabled_case_ids(): array
+{
+    static $caseIds = null;
+
+    if ($caseIds !== null) {
+        return $caseIds;
+    }
+
+    $caseIds = [];
+
+    foreach (['functions', 'datetime', 'higher-order', 'signatures', 'paths', 'regex', 'eval', 'transforms', 'errors'] as $theme) {
+        foreach (jsonata_upstream_theme_cases($theme) as [$case]) {
+            $caseIds[$case['_case_id']] = true;
+        }
+    }
+
+    return $caseIds;
+}
+
+function jsonata_upstream_all_cases(): array
+{
+    return array_map(
+        fn (array $case): array => [$case],
+        jsonata_test_upstream_cases()
+    );
+}
+
 function jsonata_upstream_input(array $case): mixed
 {
     if (array_key_exists('data', $case)) {
@@ -311,15 +341,11 @@ function jsonata_upstream_assert_case(ExpressionService $service, array $case): 
 {
     $input = jsonata_upstream_input($case);
     $bindings = $case['bindings'] ?? [];
-    $upstream = jsonata_test_upstream_dir();
-
-    expect($upstream)->not->toBeNull();
 
     $js = jsonata_test_evaluate_with_local_js(
         $case['expr'],
         $input,
-        $bindings,
-        $upstream.'/src/jsonata'
+        $bindings
     );
 
     try {
@@ -357,13 +383,23 @@ describe('Upstream Jsonata parity fixtures', function () {
         $this->service = jsonata_test_resolve(ExpressionService::class);
     });
 
-    foreach (['functions', 'datetime', 'higher-order', 'signatures', 'paths', 'regex', 'eval', 'transforms', 'errors'] as $theme) {
-        it('matches upstream '.$theme.' fixtures', function (array $case) {
-            if (jsonata_test_upstream_dir() === null) {
-                $this->markTestSkipped('Unable to clone or locate the upstream jsonata test suite.');
-            }
+    it('has the vendored upstream test-suite datasets and groups', function () {
+        $upstream = jsonata_test_upstream_dir();
 
-            jsonata_upstream_assert_case($this->service, $case);
-        })->with(fn (): array => jsonata_upstream_theme_cases($theme));
-    }
+        expect($upstream)->not->toBeNull();
+        expect(glob($upstream.'/test-suite/datasets/*.json') ?: [])->toHaveCount(28);
+        expect(glob($upstream.'/test-suite/groups/*', GLOB_ONLYDIR) ?: [])->toHaveCount(102);
+    });
+
+    it('tracks every vendored upstream fixture case', function (array $case) {
+        if (jsonata_test_upstream_dir() === null) {
+            $this->markTestSkipped('Unable to locate the vendored upstream jsonata test suite.');
+        }
+
+        if (! isset(jsonata_upstream_enabled_case_ids()[$case['_case_id']])) {
+            $this->markTestSkipped('Vendored upstream fixture is tracked but not enabled for PHP parity yet.');
+        }
+
+        jsonata_upstream_assert_case($this->service, $case);
+    })->with(fn (): array => jsonata_upstream_all_cases());
 });
