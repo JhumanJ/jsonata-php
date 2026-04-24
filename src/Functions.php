@@ -124,7 +124,7 @@ class Functions
     protected function keysOf(mixed $input): mixed
     {
         if (! is_array($input)) {
-            return [];
+            return null;
         }
 
         if (array_is_list($input)) {
@@ -142,12 +142,12 @@ class Functions
 
             $result = array_keys($keys);
 
-            return count($result) === 1 ? $result[0] : $result;
+            return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
         }
 
         $result = array_keys($input);
 
-        return count($result) === 1 ? $result[0] : $result;
+        return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
     }
 
     /**
@@ -231,13 +231,43 @@ class Functions
             return $value ? 1 : 0;
         }
 
-        if (is_string($value) && is_numeric($value)) {
-            return str_contains($value, '.') ? (float) $value : (int) $value;
+        if (is_string($value)) {
+            if (preg_match('/^0[xX][0-9a-fA-F]+$/', $value) === 1) {
+                return intval(substr($value, 2), 16);
+            }
+
+            if (preg_match('/^0[bB][01]+$/', $value) === 1) {
+                return intval(substr($value, 2), 2);
+            }
+
+            if (preg_match('/^0[oO][0-7]+$/', $value) === 1) {
+                return intval(substr($value, 2), 8);
+            }
+
+            if (preg_match('/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/', $value) !== 1) {
+                throw new EvaluationException(
+                    sprintf('Error D3030: Unable to cast value to a number: "%s"', $value),
+                    'D3030'
+                );
+            }
+
+            $number = str_contains($value, '.') || stripos($value, 'e') !== false
+                ? (float) $value
+                : (int) $value;
+
+            if (is_float($number) && (is_infinite($number) || is_nan($number))) {
+                throw new EvaluationException(
+                    sprintf('Error D3030: Unable to cast value to a number: "%s"', $value),
+                    'D3030'
+                );
+            }
+
+            return $number;
         }
 
         throw new EvaluationException(
-            'Error T0412: Expected a numeric value.',
-            'T0412'
+            sprintf('Error D3030: Unable to cast value to a number: "%s"', $this->stringify($value)),
+            'D3030'
         );
     }
 

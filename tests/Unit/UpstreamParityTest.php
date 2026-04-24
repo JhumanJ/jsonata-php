@@ -293,6 +293,60 @@ function jsonata_upstream_enabled_case_ids(): array
         }
     }
 
+    $fullyCompatibleGroups = [
+        'comparison-operators',
+        'context',
+        'coalescing-operator',
+        'default-operator',
+        'descendent-operator',
+        'encoding',
+        'fields',
+        'function-abs',
+        'function-assert',
+        'function-average',
+        'function-boolean',
+        'function-ceil',
+        'function-contains',
+        'function-count',
+        'function-each',
+        'function-error',
+        'function-exists',
+        'function-floor',
+        'function-formatBase',
+        'function-join',
+        'function-keys',
+        'function-lookup',
+        'function-lowercase',
+        'function-max',
+        'function-merge',
+        'function-number',
+        'function-pad',
+        'function-power',
+        'function-round',
+        'function-sqrt',
+        'function-substring',
+        'function-substringAfter',
+        'function-substringBefore',
+        'function-sum',
+        'function-trim',
+        'function-uppercase',
+        'higher-order-functions',
+        'hof-filter',
+        'hof-reduce',
+        'missing-paths',
+        'multiple-array-selectors',
+        'null',
+        'numeric-operators',
+        'parentheses',
+        'predicates',
+        'quoted-selectors',
+        'string-concat',
+    ];
+
+    foreach (jsonata_test_upstream_cases($fullyCompatibleGroups) as $case) {
+        $caseIds[$case['_case_id']] = true;
+    }
+
     return $caseIds;
 }
 

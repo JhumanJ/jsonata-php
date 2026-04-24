@@ -22,9 +22,14 @@ trait RegistersMetaBuiltins
 
                 return $type === 'missing' ? null : $type;
             }, '<x:s>'),
-            $this->builtin('error', function (array $arguments): never {
+            $this->builtin('error', function (array $arguments) use ($evaluator): never {
                 throw new EvaluationException(
-                    sprintf('Error D3137: %s', $arguments[0] ?? '$error() function evaluated'),
+                    sprintf(
+                        'Error D3137: %s',
+                        (! array_key_exists(0, $arguments) || $evaluator->isMissing($arguments[0]))
+                            ? '$error() function evaluated'
+                            : $arguments[0]
+                    ),
                     'D3137'
                 );
             }, '<s?:x>'),

@@ -230,7 +230,7 @@ class BuiltinSupport
     public function keysOf(mixed $input): mixed
     {
         if (! is_array($input)) {
-            return [];
+            return null;
         }
 
         if (array_is_list($input)) {
@@ -248,12 +248,12 @@ class BuiltinSupport
 
             $result = array_keys($keys);
 
-            return count($result) === 1 ? $result[0] : $result;
+            return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
         }
 
         $result = array_keys($input);
 
-        return count($result) === 1 ? $result[0] : $result;
+        return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
     }
 
     /**

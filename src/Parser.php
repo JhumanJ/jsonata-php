@@ -427,6 +427,7 @@ class Parser
                 } elseif (
                     $stream->check('(')
                     || $stream->check('[')
+                    || ($stream->check('variable') && ($stream->peek(1)['type'] ?? null) === '(')
                     || $stream->check('keyword', 'function')
                 ) {
                     $expression = [
@@ -811,7 +812,7 @@ class Parser
     private function isSubscriptExpression(array $expression): bool
     {
         return match ($expression['type'] ?? null) {
-            'literal' => is_int($expression['value']) || is_float($expression['value']) || is_string($expression['value']),
+            'literal' => is_int($expression['value']) || is_float($expression['value']),
             'unary' => ($expression['operator'] ?? null) === '-'
                 && ($expression['argument']['type'] ?? null) === 'literal'
                 && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),

@@ -70,8 +70,8 @@ trait RegistersNumericBuiltins
                 return $this->numberFormatter->format($value, $picture);
             }, '<n-so?:s>'),
             $this->builtin('formatBase', function (array $arguments): string {
-                $value = (int) $this->toNumber($arguments[0] ?? null);
-                $radix = array_key_exists(1, $arguments) ? (int) $this->toNumber($arguments[1]) : 10;
+                $value = (int) round($this->toNumber($arguments[0] ?? null));
+                $radix = array_key_exists(1, $arguments) ? (int) floor($this->toNumber($arguments[1])) : 10;
 
                 if ($radix < 2 || $radix > 36) {
                     throw new EvaluationException(
@@ -80,7 +80,9 @@ trait RegistersNumericBuiltins
                     );
                 }
 
-                return strtolower(base_convert((string) $value, 10, $radix));
+                $sign = $value < 0 ? '-' : '';
+
+                return $sign.strtolower(base_convert((string) abs($value), 10, $radix));
             }, '<n-n?:s>'),
         ];
     }

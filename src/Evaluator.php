@@ -64,6 +64,11 @@ class Evaluator
         return $value === $this->missingValue;
     }
 
+    public function missingValuePublic(): mixed
+    {
+        return $this->missingValue;
+    }
+
     public function normalizeValuePublic(mixed $value): mixed
     {
         if ($this->isMissing($value)) {
@@ -304,14 +309,14 @@ class Evaluator
             '>' => $this->compareNumbers($left, $right, '>'),
             '>=' => $this->compareNumbers($left, $right, '>='),
             'in' => $this->inSequence($left, $right),
-            '??' => (! $this->isMissing($left) && $left !== null) ? $left : $right,
+            '??' => ! $this->isMissing($left) ? $left : $right,
             '?:' => $this->isTruthy($left) ? $left : $right,
-            '+' => $this->toNumber($left) + $this->toNumber($right),
-            '-' => $this->toNumber($left) - $this->toNumber($right),
-            '*' => $this->toNumber($left) * $this->toNumber($right),
-            '**' => $this->toNumber($left) ** $this->toNumber($right),
-            '/' => $this->toNumber($left) / $this->toNumber($right),
-            '%' => fmod($this->toNumber($left), $this->toNumber($right)),
+            '+' => $this->evaluateNumericBinary($left, $right, '+'),
+            '-' => $this->evaluateNumericBinary($left, $right, '-'),
+            '*' => $this->evaluateNumericBinary($left, $right, '*'),
+            '**' => $this->evaluateNumericBinary($left, $right, '**'),
+            '/' => $this->evaluateNumericBinary($left, $right, '/'),
+            '%' => $this->evaluateNumericBinary($left, $right, '%'),
             'and' => $this->isTruthy($left) && $this->isTruthy($right),
             'or' => $this->isTruthy($left) || $this->isTruthy($right),
             '&' => $this->stringify($left).$this->stringify($right),
@@ -1936,8 +1941,8 @@ class Evaluator
 
     private function compareValues(mixed $left, mixed $right): bool
     {
-        $left = $this->normalizeValuePublic($left);
-        $right = $this->normalizeValuePublic($right);
+        $left = $this->normalizePreservingMissingPublic($left);
+        $right = $this->normalizePreservingMissingPublic($right);
 
         if ($this->isMissing($left) || $this->isMissing($right)) {
             return false;
@@ -1998,23 +2003,104 @@ class Evaluator
 
     private function compareNumbers(mixed $left, mixed $right, string $operator): bool
     {
-        $left = $this->normalizeValuePublic($left);
-        $right = $this->normalizeValuePublic($right);
+        $left = $this->normalizePreservingMissingPublic($left);
+        $right = $this->normalizePreservingMissingPublic($right);
 
-        if ($this->isMissing($left) || $this->isMissing($right)) {
+        if ($this->isMissing($left)) {
             return false;
         }
 
-        $left = $this->toNumber($left);
-        $right = $this->toNumber($right);
+        $leftIsNumber = is_int($left) || is_float($left);
+        $leftIsString = is_string($left);
+
+        if (! $leftIsNumber && ! $leftIsString) {
+            throw new EvaluationException(
+                sprintf('Error T2010: The expressions either side of operator "%s" must evaluate to numeric or string values.', $operator),
+                'T2010'
+            );
+        }
+
+        if ($this->isMissing($right)) {
+            return false;
+        }
+
+        $rightIsNumber = is_int($right) || is_float($right);
+        $rightIsString = is_string($right);
+
+        if (($leftIsNumber && $rightIsString) || ($leftIsString && $rightIsNumber)) {
+            throw new EvaluationException(
+                sprintf('Error T2009: The values either side of operator "%s" must be of the same data type.', $operator),
+                'T2009'
+            );
+        }
+
+        if (! $rightIsNumber && ! $rightIsString) {
+            throw new EvaluationException(
+                sprintf('Error T2010: The expressions either side of operator "%s" must evaluate to numeric or string values.', $operator),
+                'T2010'
+            );
+        }
+
+        $comparison = $leftIsString && $rightIsString
+            ? strcmp($left, $right)
+            : ($left <=> $right);
 
         return match ($operator) {
-            '<' => $left < $right,
-            '<=' => $left <= $right,
-            '>' => $left > $right,
-            '>=' => $left >= $right,
+            '<' => $comparison < 0,
+            '<=' => $comparison <= 0,
+            '>' => $comparison > 0,
+            '>=' => $comparison >= 0,
             default => false,
         };
+    }
+
+    private function evaluateNumericBinary(mixed $left, mixed $right, string $operator): mixed
+    {
+        $left = $this->normalizeValuePublic($left);
+        $right = $this->normalizeValuePublic($right);
+
+        if ($this->isMissing($left) || $left === null) {
+            return $this->missingValue;
+        }
+
+        if (! is_int($left) && ! is_float($left)) {
+            throw new EvaluationException(
+                sprintf('Error T2001: The left side of the "%s" operator must evaluate to a number.', $operator),
+                'T2001'
+            );
+        }
+
+        if ($this->isMissing($right) || $right === null) {
+            return $this->missingValue;
+        }
+
+        if (! is_int($right) && ! is_float($right)) {
+            throw new EvaluationException(
+                sprintf('Error T2002: The right side of the "%s" operator must evaluate to a number.', $operator),
+                'T2002'
+            );
+        }
+
+        $result = match ($operator) {
+            '+' => $left + $right,
+            '-' => $left - $right,
+            '*' => $left * $right,
+            '**' => $left ** $right,
+            '/' => $left / $right,
+            '%' => fmod($left, $right),
+            default => throw new EvaluationException(
+                sprintf('Unsupported JSONata numeric operator [%s].', $operator)
+            ),
+        };
+
+        if (is_float($result) && (is_infinite($result) || is_nan($result))) {
+            throw new EvaluationException(
+                'Error D1001: Number out of range.',
+                'D1001'
+            );
+        }
+
+        return $result;
     }
 
     private function inSequence(mixed $left, mixed $right): bool
@@ -2046,7 +2132,21 @@ class Evaluator
         }
 
         if (is_array($value)) {
+            if (array_is_list($value)) {
+                foreach ($value as $item) {
+                    if ($this->isTruthy($item)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
             return $value !== [];
+        }
+
+        if ($value instanceof Closure) {
+            return false;
         }
 
         if (is_string($value)) {

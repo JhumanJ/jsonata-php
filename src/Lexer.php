@@ -23,6 +23,23 @@ class Lexer
                 continue;
             }
 
+            if (substr($expression, $offset, 2) === '/*') {
+                $end = strpos($expression, '*/', $offset + 2);
+
+                if ($end === false) {
+                    throw new EvaluationException(
+                        'Error S0106: Comment has no closing tag',
+                        'S0106',
+                        $offset + 1,
+                        ['position' => $offset + 1]
+                    );
+                }
+
+                $offset = $end + 2;
+
+                continue;
+            }
+
             $compoundOperator = $this->readCompoundOperator($expression, $offset);
             if ($compoundOperator !== null) {
                 $tokens[] = $compoundOperator;
@@ -280,9 +297,47 @@ class Lexer
             $offset++;
         }
 
+        if (
+            isset($expression[$offset])
+            && ($expression[$offset] === 'e' || $expression[$offset] === 'E')
+        ) {
+            $exponentOffset = $offset;
+            $exponent = $expression[$offset];
+            $offset++;
+
+            if (isset($expression[$offset]) && ($expression[$offset] === '+' || $expression[$offset] === '-')) {
+                $exponent .= $expression[$offset];
+                $offset++;
+            }
+
+            $digits = '';
+            while (isset($expression[$offset]) && ctype_digit($expression[$offset])) {
+                $digits .= $expression[$offset];
+                $offset++;
+            }
+
+            if ($digits === '') {
+                $offset = $exponentOffset;
+            } else {
+                $buffer .= $exponent.$digits;
+                $hasDecimalPoint = true;
+            }
+        }
+
+        $value = $hasDecimalPoint ? (float) $buffer : (int) $buffer;
+
+        if (is_float($value) && (is_infinite($value) || is_nan($value))) {
+            throw new EvaluationException(
+                sprintf('Error S0102: Number out of range: "%s"', $buffer),
+                'S0102',
+                $position,
+                ['position' => $position]
+            );
+        }
+
         return [
             'type' => 'number',
-            'value' => $hasDecimalPoint ? (float) $buffer : (int) $buffer,
+            'value' => $value,
             'position' => $position,
         ];
     }
