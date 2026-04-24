@@ -839,7 +839,7 @@ JSONATA;
     });
 
     it('preserves parent semantics across focus-bound sibling traversals', function () {
-        $library = json_decode(file_get_contents('/tmp/jsonata-upstream/test/test-suite/datasets/library.json'), true);
+        $library = jsonata_test_upstream_datasets()['library'];
 
         expect($this->service->evaluate(
             'library.loans@$L.books@$B[$L.isbn=$B.isbn].{ "book": $B.title, "parent": $keys(%) }',
