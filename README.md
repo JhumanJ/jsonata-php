@@ -13,13 +13,14 @@ What is already included:
 - Lexer, parser and evaluator for a broad JSONata subset
 - Built-in functions for strings, collections, objects, numeric helpers, encoding, regex, datetime, formatting and evaluation
 - Support for transforms, partial application, lambda aliases, parent operator, tuple bindings, wildcard/descendant traversal and higher-order composition
-- Parity tests that compare the PHP runtime against the `jsonata` npm package
+- Parity tests that compare the PHP runtime against the `jsonata` npm package and the vendored upstream JSONata JS test-suite fixtures
 
 Recent parity improvements include:
 
 - correct precedence between assignment (`:=`) and conditional (`? :`) expressions inside grouped blocks
 - JS-aligned `$map()` singleton collapsing, which matters for object-producing callbacks
 - regression coverage for block-scoped lambda callbacks that bind locals and return projected objects
+- deterministic coverage of the JSONata JS `test/test-suite/datasets` and `test/test-suite/groups` fixtures, vendored from `jsonata-js/jsonata`
 
 ## Compatibility Matrix
 
@@ -35,7 +36,14 @@ Recent parity improvements include:
 | Transforms | Partial | Transform expressions are supported, with focused upstream parity fixtures for nested update scenarios. |
 | Error model | Partial | JSONata-style codes are present, but full 1:1 message/token/offset parity still needs deeper auditing. |
 
-The repository now includes a structured upstream-fixture parity layer in `tests/Unit/UpstreamParityTest.php`, grouped by theme (`functions`, `datetime`, `higher-order`, `paths`, `regex`, `transforms`, `errors`). It clones `jsonata-js/jsonata` into the system temp directory when needed so the test suite can exercise real upstream fixtures locally.
+The repository includes a structured upstream-fixture parity layer in `tests/Unit/UpstreamParityTest.php`. The fixture corpus is adapted from the JSONata JavaScript project and vendored under `tests/fixtures/upstream-jsonata` from `jsonata-js/jsonata` commit `597e5ee6ada3e13eaa4880f00468dcc1cba21142`.
+
+Vendored upstream fixture paths:
+
+- `test/test-suite/datasets`
+- `test/test-suite/groups`
+
+The parity test enumerates the full upstream fixture catalog. Cases that already match this PHP implementation are executed against the local `jsonata` npm package; the rest remain visible as skipped parity work so future compatibility gaps cannot hide behind a partial fixture checkout.
 
 ## Installation
 
