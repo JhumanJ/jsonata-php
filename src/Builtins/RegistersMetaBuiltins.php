@@ -53,6 +53,15 @@ trait RegistersMetaBuiltins
                 try {
                     return $this->evaluateInline($expression, $focus, $evaluator);
                 } catch (EvaluationException $exception) {
+                    if (str_starts_with($exception->jsonataCode, 'S')) {
+                        throw new EvaluationException(
+                            sprintf('Syntax error in expression passed to function eval: "%s"', $exception->getMessage()),
+                            'D3120',
+                            $exception->position,
+                            $exception->details
+                        );
+                    }
+
                     throw new EvaluationException(
                         sprintf('Error D3121: Dynamic error evaluating the expression passed to function eval: %s', $exception->getMessage()),
                         'D3121',

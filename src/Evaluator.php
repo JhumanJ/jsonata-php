@@ -80,6 +80,10 @@ class Evaluator
             return $value;
         }
 
+        if ($value instanceof stdClass && get_object_vars($value) === []) {
+            return $value;
+        }
+
         return $this->unwrapTuples($value);
     }
 
@@ -1091,17 +1095,26 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @return array<string, mixed>
      */
-    private function evaluateObjectLiteral(array $ast, mixed $context, array &$environment, mixed $rootContext): array
+    private function evaluateObjectLiteral(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
+        if ($ast['pairs'] === []) {
+            return new stdClass;
+        }
+
         $object = [];
 
         foreach ($ast['pairs'] as $pair) {
-            $keys = $this->toSequence(
-                $this->evaluateAst($pair['key'], $context, $environment, $rootContext)
-            );
+            $keyResult = $this->evaluateAst($pair['key'], $context, $environment, $rootContext);
+            $this->assertObjectKeyResult($keyResult, $pair, $ast);
+
+            $keys = $this->toSequence($keyResult);
             $value = $this->evaluateAst($pair['value'], $context, $environment, $rootContext);
+
+            if ($this->isMissing($value)) {
+                continue;
+            }
+
             $value = $this->normalizeValuePublic($value);
 
             foreach ($keys as $key) {
@@ -1109,7 +1122,25 @@ class Evaluator
                     continue;
                 }
 
-                $object[$this->stringify($key)] = $this->isMissing($value) ? null : $value;
+                $key = $this->normalizePreservingMissingPublic($key);
+
+                if (! is_string($key)) {
+                    throw new EvaluationException(
+                        sprintf('Error T1003: Key in object structure must evaluate to a string; got: %s', $this->stringify($key)),
+                        'T1003',
+                        (int) ($pair['key']['position'] ?? $ast['position'] ?? 0)
+                    );
+                }
+
+                if (array_key_exists($key, $object)) {
+                    throw new EvaluationException(
+                        sprintf('Error D1009: Multiple key definitions evaluate to same key: "%s"', $key),
+                        'D1009',
+                        (int) ($pair['key']['position'] ?? $ast['position'] ?? 0)
+                    );
+                }
+
+                $object[$key] = $this->isMissing($value) ? null : $value;
             }
         }
 
@@ -1129,35 +1160,77 @@ class Evaluator
         $grouped = [];
 
         foreach ($sequence as $item) {
+            $itemKeys = [];
+
             foreach ($ast['pairs'] as $pair) {
-                $keys = $this->toSequence(
-                    $this->evaluateAst($pair['key'], $item, $environment, $rootContext)
-                );
+                $keyResult = $this->evaluateAst($pair['key'], $item, $environment, $rootContext);
+                $this->assertObjectKeyResult($keyResult, $pair, $ast);
+
+                $keys = $this->toSequence($keyResult);
                 $value = $this->evaluateAst($pair['value'], $item, $environment, $rootContext);
+
+                if ($this->isMissing($value)) {
+                    continue;
+                }
 
                 foreach ($keys as $key) {
                     if ($this->isMissing($key) || $key === null) {
                         continue;
                     }
 
-                    $stringKey = $this->stringify($key);
+                    $key = $this->normalizePreservingMissingPublic($key);
 
-                    if (! array_key_exists($stringKey, $grouped)) {
-                        $grouped[$stringKey] = $value;
+                    if (! is_string($key)) {
+                        throw new EvaluationException(
+                            sprintf('Error T1003: Key in object structure must evaluate to a string; got: %s', $this->stringify($key)),
+                            'T1003',
+                            (int) ($pair['key']['position'] ?? $ast['position'] ?? 0)
+                        );
+                    }
+
+                    if (array_key_exists($key, $itemKeys)) {
+                        throw new EvaluationException(
+                            sprintf('Error D1009: Multiple key definitions evaluate to same key: "%s"', $key),
+                            'D1009',
+                            (int) ($pair['key']['position'] ?? $ast['position'] ?? 0)
+                        );
+                    }
+
+                    $itemKeys[$key] = true;
+
+                    if (! array_key_exists($key, $grouped)) {
+                        $grouped[$key] = $value;
 
                         continue;
                     }
 
-                    if (! is_array($grouped[$stringKey]) || ! array_is_list($grouped[$stringKey])) {
-                        $grouped[$stringKey] = [$grouped[$stringKey]];
+                    if (! is_array($grouped[$key]) || ! array_is_list($grouped[$key])) {
+                        $grouped[$key] = [$grouped[$key]];
                     }
 
-                    $grouped[$stringKey][] = $value;
+                    $grouped[$key][] = $value;
                 }
             }
         }
 
         return $grouped;
+    }
+
+    /**
+     * @param  array<string, mixed>  $pair
+     * @param  array<string, mixed>  $ast
+     */
+    private function assertObjectKeyResult(mixed $key, array $pair, array $ast): void
+    {
+        $key = $this->normalizePreservingMissingPublic($key);
+
+        if (is_array($key) && array_is_list($key)) {
+            throw new EvaluationException(
+                sprintf('Error T1003: Key in object structure must evaluate to a string; got: %s', $this->stringify($key)),
+                'T1003',
+                (int) ($pair['key']['position'] ?? $ast['position'] ?? 0)
+            );
+        }
     }
 
     /**
@@ -1306,6 +1379,20 @@ class Evaluator
         $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
         if (! $callee instanceof Closure) {
+            $bareCallee = ($ast['callee']['type'] ?? null) === 'identifier'
+                ? (string) ($ast['callee']['name'] ?? '')
+                : null;
+
+            if ($bareCallee !== null && array_key_exists('$'.$bareCallee, $environment)) {
+                throw new EvaluationException(
+                    sprintf(
+                        'Error T1007: Attempted to partially apply a non-function. Did you mean $%s?',
+                        $bareCallee
+                    ),
+                    'T1007'
+                );
+            }
+
             throw new EvaluationException(
                 'Error T1008: Attempted to partially apply a non-function value.',
                 'T1008'
@@ -2226,6 +2313,10 @@ class Evaluator
             return $value !== [];
         }
 
+        if ($value instanceof stdClass && get_object_vars($value) === []) {
+            return false;
+        }
+
         if ($value instanceof Closure) {
             return false;
         }
@@ -2269,7 +2360,7 @@ class Evaluator
         }
 
         if (is_int($value)) {
-            return (string) $value;
+            return $this->stringifyNumber($value);
         }
 
         if (is_float($value)) {
@@ -2280,7 +2371,7 @@ class Evaluator
                 );
             }
 
-            return sprintf('%.15g', $value);
+            return $this->stringifyNumber($value);
         }
 
         if ($value instanceof Closure) {
@@ -2303,6 +2394,33 @@ class Evaluator
         return $encoded === false ? '' : $encoded;
     }
 
+    private function stringifyNumber(int|float $value): string
+    {
+        $rounded = (float) sprintf('%.14E', (float) $value);
+
+        return $this->jsonEncodeNumber($rounded);
+    }
+
+    private function jsonEncodeNumber(float $value): string
+    {
+        $absolute = abs($value);
+
+        if ($value !== 0.0 && ($absolute >= 1.0e21 || $absolute < 1.0e-6)) {
+            return preg_replace(
+                ['/(\\.\\d*?)0+e/', '/\\.e/', '/e([+-])0*(\\d+)/'],
+                ['$1e', 'e', 'e$1$2'],
+                strtolower(sprintf('%.14E', $value))
+            ) ?? strtolower(sprintf('%.14E', $value));
+        }
+
+        $decimals = max(0, 15 - (int) floor(log10($absolute === 0.0 ? 1.0 : $absolute)) - 1);
+        $string = number_format($value, $decimals, '.', '');
+
+        return str_contains($string, '.')
+            ? rtrim(rtrim($string, '0'), '.')
+            : $string;
+    }
+
     public function stringifyPublic(mixed $value, bool $prettify = false): string
     {
         return $this->stringify($value, $prettify);
@@ -2319,6 +2437,10 @@ class Evaluator
                 'Error D1001: Number out of range.',
                 'D1001'
             );
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return (float) sprintf('%.14E', (float) $value);
         }
 
         if (! is_array($value)) {
@@ -2486,6 +2608,10 @@ class Evaluator
     {
         if ($this->isTuple($value)) {
             return $this->unwrapTuples($this->tupleValue($value));
+        }
+
+        if ($value instanceof stdClass && get_object_vars($value) === []) {
+            return [];
         }
 
         if (! is_array($value)) {

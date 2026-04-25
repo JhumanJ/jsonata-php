@@ -264,8 +264,10 @@ class Functions
             return $number;
         }
 
+        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
         throw new EvaluationException(
-            sprintf('Error D3030: Unable to cast value to a number: "%s"', $this->stringify($value)),
+            sprintf('Error D3030: Unable to cast value to a number: "%s"', $encoded === false ? '' : $encoded),
             'D3030'
         );
     }

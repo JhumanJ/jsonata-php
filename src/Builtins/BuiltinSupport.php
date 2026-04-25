@@ -9,7 +9,6 @@ use JsonataPhp\EvaluationException;
 use JsonataPhp\Evaluator;
 use JsonataPhp\RegexPattern;
 use ReflectionFunction;
-use stdClass;
 use WeakMap;
 
 class BuiltinSupport
@@ -59,9 +58,7 @@ class BuiltinSupport
 
     public function isMissingLike(mixed $value, Evaluator $evaluator): bool
     {
-        return $evaluator->isMissing($value)
-            || ($value instanceof stdClass && get_object_vars($value) === [])
-            || (is_object($value) && ! $value instanceof Closure && ! $value instanceof RegexPattern);
+        return $evaluator->isMissing($value);
     }
 
     /**

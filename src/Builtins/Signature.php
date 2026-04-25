@@ -5,6 +5,7 @@ namespace JsonataPhp\Builtins;
 use Closure;
 use JsonataPhp\EvaluationException;
 use JsonataPhp\Evaluator;
+use JsonataPhp\RegexPattern;
 
 class Signature
 {
@@ -238,7 +239,7 @@ class Signature
             return 'm';
         }
 
-        if ($value instanceof Closure) {
+        if ($value instanceof Closure || $value instanceof RegexPattern) {
             return 'f';
         }
 
@@ -249,6 +250,7 @@ class Signature
             $value === null => 'l',
             is_array($value) && array_is_list($value) => 'a',
             is_array($value) => 'o',
+            is_object($value) => 'o',
             default => 'm',
         };
     }
