@@ -240,7 +240,7 @@ class Lexer
                     throw $this->syntaxError('Unterminated string literal.', $position);
                 }
 
-                $buffer .= stripcslashes('\\'.$expression[$offset]);
+                $buffer .= $this->readEscapedCharacter($expression, $offset, $position);
                 $offset++;
 
                 continue;
@@ -261,6 +261,57 @@ class Lexer
         }
 
         throw $this->syntaxError('Unterminated string literal.', $position);
+    }
+
+    private function readEscapedCharacter(string $expression, int &$offset, int $stringPosition): string
+    {
+        $character = $expression[$offset];
+
+        return match ($character) {
+            '"', "'", '`', '\\', '/' => $character,
+            'b' => "\b",
+            'f' => "\f",
+            'n' => "\n",
+            'r' => "\r",
+            't' => "\t",
+            'u' => $this->readUnicodeEscape($expression, $offset, $stringPosition),
+            default => throw new EvaluationException(
+                sprintf('Error S0103: Unsupported escape sequence: \\\\%s', $character),
+                'S0103',
+                $offset + 1,
+                ['position' => $offset + 1]
+            ),
+        };
+    }
+
+    private function readUnicodeEscape(string $expression, int &$offset, int $stringPosition): string
+    {
+        $digits = substr($expression, $offset + 1, 4);
+
+        if (strlen($digits) !== 4 || preg_match('/^[0-9a-fA-F]{4}$/', $digits) !== 1) {
+            throw new EvaluationException(
+                'Error S0104: The escape sequence \u must be followed by 4 hex digits',
+                'S0104',
+                $stringPosition + 1,
+                ['position' => $stringPosition + 1]
+            );
+        }
+
+        $offset += 4;
+        $codepoint = hexdec($digits);
+
+        if ($codepoint >= 0xD800 && $codepoint <= 0xDBFF) {
+            $nextEscape = substr($expression, $offset + 1, 6);
+            if (preg_match('/^\\\\u([0-9a-fA-F]{4})$/', $nextEscape, $match) === 1) {
+                $low = hexdec($match[1]);
+                if ($low >= 0xDC00 && $low <= 0xDFFF) {
+                    $offset += 6;
+                    $codepoint = 0x10000 + (($codepoint - 0xD800) * 0x400) + ($low - 0xDC00);
+                }
+            }
+        }
+
+        return mb_chr($codepoint, 'UTF-8');
     }
 
     /**

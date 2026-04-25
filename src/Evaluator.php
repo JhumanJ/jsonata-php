@@ -131,7 +131,7 @@ class Evaluator
             'bind' => $this->evaluateBind($ast, $context, $environment, $rootContext),
             'sequence' => $this->evaluateSequence($ast, $context, $environment, $rootContext),
             'assignment' => $this->evaluateAssignment($ast, $context, $environment, $rootContext),
-            'grouping' => $this->evaluateAst($ast['expression'], $context, $environment, $rootContext),
+            'grouping' => $this->evaluateGrouping($ast, $context, $environment, $rootContext),
             'conditional' => $this->evaluateConditional($ast, $context, $environment, $rootContext),
             'unary' => $this->evaluateUnary($ast, $context, $environment, $rootContext),
             'binary' => $this->evaluateBinary($ast, $context, $environment, $rootContext),
@@ -150,6 +150,7 @@ class Evaluator
             'descendant_context' => $this->evaluateDescendant($context),
             'parent_context' => $this->evaluateParentContext($ast, $context),
             'parent' => $this->evaluateParent($ast, $context, $environment, $rootContext),
+            'array_constructor' => $this->evaluateArrayConstructor($ast, $context, $environment, $rootContext),
             'subscript' => $this->accessSubscript(
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
                 $this->evaluateAst($ast['index'], $context, $environment, $rootContext),
@@ -202,6 +203,18 @@ class Evaluator
         }
 
         return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     * @param  array<string, mixed>  $rootContext
+     */
+    private function evaluateGrouping(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    {
+        $localEnvironment = $environment;
+
+        return $this->evaluateAst($ast['expression'], $context, $localEnvironment, $rootContext);
     }
 
     /**
@@ -363,6 +376,33 @@ class Evaluator
         }
 
         return $items;
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     * @param  array<string, mixed>  $rootContext
+     * @return array<int, mixed>
+     */
+    private function evaluateArrayConstructor(array $ast, mixed $context, array &$environment, array $rootContext): array
+    {
+        return $this->arrayConstructorFromValue(
+            $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
+        );
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function arrayConstructorFromValue(mixed $value): array
+    {
+        if ($this->isMissing($value) || $value === null) {
+            return [];
+        }
+
+        return is_array($value) && array_is_list($value)
+            ? array_values($value)
+            : [$value];
     }
 
     private function resolveIdentifier(string $name, mixed $context): mixed
@@ -1270,6 +1310,12 @@ class Evaluator
             return $this->composeClosures($input, $next);
         }
 
+        if (($ast['type'] ?? null) === 'array_constructor') {
+            return $this->arrayConstructorFromValue(
+                $this->evaluateChain($ast['target'], $input, $context, $environment, $rootContext)
+            );
+        }
+
         if (($ast['type'] ?? null) === 'call') {
             $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
@@ -2070,6 +2116,13 @@ class Evaluator
             );
         }
 
+        if (is_float($left) && (is_infinite($left) || is_nan($left))) {
+            throw new EvaluationException(
+                'Error D1001: Number out of range.',
+                'D1001'
+            );
+        }
+
         if ($this->isMissing($right) || $right === null) {
             return $this->missingValue;
         }
@@ -2081,19 +2134,28 @@ class Evaluator
             );
         }
 
+        if (is_float($right) && (is_infinite($right) || is_nan($right))) {
+            throw new EvaluationException(
+                'Error D1001: Number out of range.',
+                'D1001'
+            );
+        }
+
+        $divisionByZero = ($operator === '/' || $operator === '%') && $right == 0;
+
         $result = match ($operator) {
             '+' => $left + $right,
             '-' => $left - $right,
             '*' => $left * $right,
             '**' => $left ** $right,
-            '/' => $left / $right,
-            '%' => fmod($left, $right),
+            '/' => $right == 0 ? ($left == 0 ? NAN : ($left > 0 ? INF : -INF)) : $left / $right,
+            '%' => $right == 0 ? NAN : fmod($left, $right),
             default => throw new EvaluationException(
                 sprintf('Unsupported JSONata numeric operator [%s].', $operator)
             ),
         };
 
-        if (is_float($result) && (is_infinite($result) || is_nan($result))) {
+        if (! $divisionByZero && is_float($result) && (is_infinite($result) || is_nan($result))) {
             throw new EvaluationException(
                 'Error D1001: Number out of range.',
                 'D1001'
@@ -2161,15 +2223,23 @@ class Evaluator
         return $this->isTruthy($value);
     }
 
-    private function stringify(mixed $value): string
+    private function stringify(mixed $value, bool $prettify = false): string
     {
+        if ($this->isMissing($value)) {
+            return '';
+        }
+
         $value = $this->normalizeValuePublic($value);
 
-        if ($this->isMissing($value) || $value === null) {
+        if ($this->isMissing($value)) {
             return '';
         }
 
         $value = $this->unwrapTuples($value);
+
+        if ($value === null) {
+            return 'null';
+        }
 
         if (is_string($value)) {
             return $value;
@@ -2179,18 +2249,70 @@ class Evaluator
             return $value ? 'true' : 'false';
         }
 
-        if (is_scalar($value)) {
+        if (is_int($value)) {
             return (string) $value;
         }
 
-        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (is_float($value)) {
+            if (is_infinite($value) || is_nan($value)) {
+                throw new EvaluationException(
+                    'Error D3001: Attempting to invoke string function on Infinity or NaN',
+                    'D3001'
+                );
+            }
+
+            return sprintf('%.15g', $value);
+        }
+
+        if ($value instanceof Closure) {
+            return '';
+        }
+
+        $encoded = json_encode(
+            $this->normalizeForJsonString($value),
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | ($prettify ? JSON_PRETTY_PRINT : 0)
+        );
+
+        if ($prettify && $encoded !== false) {
+            $encoded = preg_replace_callback(
+                '/^( +)/m',
+                static fn (array $match): string => str_repeat(' ', (int) (strlen($match[1]) / 2)),
+                $encoded
+            ) ?? $encoded;
+        }
 
         return $encoded === false ? '' : $encoded;
     }
 
-    public function stringifyPublic(mixed $value): string
+    public function stringifyPublic(mixed $value, bool $prettify = false): string
     {
-        return $this->stringify($value);
+        return $this->stringify($value, $prettify);
+    }
+
+    private function normalizeForJsonString(mixed $value): mixed
+    {
+        if ($value instanceof Closure) {
+            return '';
+        }
+
+        if (is_float($value) && (is_infinite($value) || is_nan($value))) {
+            throw new EvaluationException(
+                'Error D1001: Number out of range.',
+                'D1001'
+            );
+        }
+
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $normalized = [];
+
+        foreach ($value as $key => $item) {
+            $normalized[$key] = $this->normalizeForJsonString($item);
+        }
+
+        return $normalized;
     }
 
     private function toNumber(mixed $value): int|float

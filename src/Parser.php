@@ -33,6 +33,10 @@ class Parser
         $expressions = [$this->parseConditional($stream)];
 
         while ($stream->match(';')) {
+            if ($stream->check(')') || $stream->check('}') || $stream->check(']') || $stream->check('eof')) {
+                break;
+            }
+
             $expressions[] = $this->parseConditional($stream);
         }
 
@@ -448,6 +452,15 @@ class Parser
             }
 
             if ($stream->match('[')) {
+                if ($stream->match(']')) {
+                    $expression = [
+                        'type' => 'array_constructor',
+                        'target' => $expression,
+                    ];
+
+                    continue;
+                }
+
                 $indexOrPredicate = $this->parseExpression($stream);
                 $stream->expect(']');
                 $expression = $this->isSubscriptExpression($indexOrPredicate)

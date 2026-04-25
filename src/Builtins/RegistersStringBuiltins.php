@@ -14,7 +14,10 @@ trait RegistersStringBuiltins
     protected function stringBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
     {
         return [
-            $this->builtin('string', fn (array $arguments): string => $evaluator->stringifyPublic($arguments[0] ?? null), '<x-b?:s>'),
+            $this->builtin('string', fn (array $arguments): string => $evaluator->stringifyPublic(
+                $arguments[0] ?? null,
+                (bool) ($arguments[1] ?? false)
+            ), '<x-b?:s>'),
             $this->builtin('join', function (array $arguments) use ($evaluator): ?string {
                 if (! array_key_exists(0, $arguments) || $arguments[0] === null) {
                     return null;
@@ -109,7 +112,7 @@ trait RegistersStringBuiltins
             $this->builtin('split', function (array $arguments) use ($evaluator): array {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
                 $separator = $arguments[1] ?? '';
-                $limit = array_key_exists(2, $arguments) ? (int) $arguments[2] : null;
+                $limit = array_key_exists(2, $arguments) ? (int) floor((float) $arguments[2]) : null;
 
                 if ($limit === 0) {
                     return [];
@@ -123,17 +126,23 @@ trait RegistersStringBuiltins
                 }
 
                 if ($this->isRegexLiteral($separator)) {
-                    return preg_split($this->toPregPattern($separator), $value, $limit ?? -1) ?: [$value];
+                    $parts = preg_split($this->toPregPattern($separator), $value) ?: [$value];
+
+                    return $limit === null ? $parts : array_slice($parts, 0, $limit);
                 }
 
                 $separator = $evaluator->stringifyPublic($separator);
 
                 if ($separator === '') {
-                    return preg_split('//u', $value, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+                    $parts = preg_split('//u', $value, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+                    return $limit === null ? $parts : array_slice($parts, 0, $limit);
                 }
 
-                return $limit === null ? explode($separator, $value) : explode($separator, $value, $limit);
-            }),
+                $parts = explode($separator, $value);
+
+                return $limit === null ? $parts : array_slice($parts, 0, $limit);
+            }, '<s-(sf)n?:a<s>>'),
             $this->builtin('replace', function (array $arguments) use ($evaluator): string {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
                 $pattern = $arguments[1] ?? '';
@@ -149,6 +158,13 @@ trait RegistersStringBuiltins
 
                 if ($limit === 0) {
                     return $value;
+                }
+
+                if (array_key_exists(3, $arguments) && $limit < 0) {
+                    throw new EvaluationException(
+                        'Error D3011: Fourth argument of replace function must evaluate to a positive number.',
+                        'D3011'
+                    );
                 }
 
                 if ($this->isRegexLiteral($pattern)) {
@@ -174,7 +190,7 @@ trait RegistersStringBuiltins
                 }
 
                 return str_replace($pattern, $replacement, $value);
-            }),
+            }, '<s-(sf)(sf)n?:s>'),
             $this->builtin('match', function (array $arguments) use ($evaluator): mixed {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
                 $pattern = $arguments[1] ?? null;

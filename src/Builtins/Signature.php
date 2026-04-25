@@ -83,6 +83,9 @@ class Signature
                     }
 
                     $parameters[$lastIndex]['regex'] .= $symbol === '+' ? '+?' : $symbol;
+                    if ($symbol === '?') {
+                        $parameters[$lastIndex]['optional'] = true;
+                    }
                     break;
                 case '(':
                     $endParen = self::findClosingBracket($definition, $position, '(', ')');
@@ -170,6 +173,8 @@ class Signature
 
             foreach (str_split($match) as $singleSymbol) {
                 if (($parameter['type'] ?? null) === 'a') {
+                    $argument = $arguments[$argumentIndex] ?? null;
+
                     if ($singleSymbol === 'm') {
                         $validatedArguments[] = $argument;
                         $argumentIndex++;
@@ -177,7 +182,6 @@ class Signature
                         continue;
                     }
 
-                    $argument = $arguments[$argumentIndex] ?? null;
                     $this->ensureArraySubtype($argument, $singleSymbol, $parameter, $argumentIndex + 1, $evaluator);
 
                     if ($singleSymbol !== 'a') {
@@ -200,7 +204,10 @@ class Signature
 
     public function parameterCount(): int
     {
-        return count($this->parameters);
+        return count(array_filter(
+            $this->parameters,
+            static fn (array $parameter): bool => ($parameter['optional'] ?? false) !== true
+        ));
     }
 
     private static function findClosingBracket(string $input, int $start, string $open, string $close): int

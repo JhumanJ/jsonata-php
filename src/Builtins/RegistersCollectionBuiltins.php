@@ -23,6 +23,13 @@ trait RegistersCollectionBuiltins
 
             return false;
         };
+        $collapseCollection = static function (array $items, array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
+            if ($preservesExplicitArray($arguments)) {
+                return array_values($items);
+            }
+
+            return $evaluator->collapseSequence($items);
+        };
 
         return [
             $this->builtin('map', function (array $arguments) use ($evaluator): mixed {
@@ -65,21 +72,32 @@ trait RegistersCollectionBuiltins
                     ? []
                     : $evaluator->collapseSequence($result);
             }, '<xx:a>'),
-            $this->builtin('reverse', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
+            $this->builtin('reverse', function (array $arguments) use ($evaluator, $collapseCollection): mixed {
                 $result = array_reverse($evaluator->toSequence($arguments[0] ?? null));
 
-                return $result === [] && $preservesExplicitArray($arguments)
-                    ? []
-                    : $evaluator->collapseSequence($result);
+                return $collapseCollection($result, $arguments);
             }, '<a:a>'),
-            $this->builtin('distinct', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
-                $result = $this->distinctValues($evaluator->toSequence($arguments[0] ?? null), $evaluator);
+            $this->builtin('distinct', function (array $arguments) use ($evaluator, $collapseCollection): mixed {
+                $items = $evaluator->toSequence($arguments[0] ?? null);
+                $seen = [];
+                $result = [];
 
-                return ($result === null || $evaluator->isMissing($result)) && $preservesExplicitArray($arguments)
-                    ? []
-                    : $result;
+                foreach ($items as $item) {
+                    $hash = is_scalar($item) || $item === null
+                        ? gettype($item).':'.(string) $item
+                        : 'json:'.$evaluator->stringifyPublic($item);
+
+                    if (array_key_exists($hash, $seen)) {
+                        continue;
+                    }
+
+                    $seen[$hash] = true;
+                    $result[] = $item;
+                }
+
+                return $collapseCollection($result, $arguments);
             }, '<x:x>'),
-            $this->builtin('sort', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
+            $this->builtin('sort', function (array $arguments) use ($evaluator, $collapseCollection): mixed {
                 $items = $evaluator->toSequence($arguments[0] ?? null);
                 $callback = $arguments[1] ?? null;
                 $sorted = $items;
@@ -91,9 +109,7 @@ trait RegistersCollectionBuiltins
                         return $decision ? 1 : -1;
                     });
 
-                    return $sorted === [] && $preservesExplicitArray($arguments)
-                        ? []
-                        : $evaluator->collapseSequence($sorted);
+                    return $collapseCollection($sorted, $arguments);
                 }
 
                 $types = array_unique(array_map(
@@ -116,15 +132,18 @@ trait RegistersCollectionBuiltins
                     return strcmp((string) $left, (string) $right);
                 });
 
-                return $sorted === [] && $preservesExplicitArray($arguments)
-                    ? []
-                    : $evaluator->collapseSequence($sorted);
+                return $collapseCollection($sorted, $arguments);
             }, '<af?:a>'),
-            $this->builtin('zip', function (array $arguments): array {
-                $arrays = array_map(
-                    fn (mixed $value): array => is_array($value) && array_is_list($value) ? array_values($value) : [$value],
-                    $arguments
-                );
+            $this->builtin('zip', function (array $arguments) use ($evaluator): array {
+                $arrays = [];
+
+                foreach ($arguments as $argument) {
+                    if ($evaluator->isMissing($argument)) {
+                        return [];
+                    }
+
+                    $arrays[] = is_array($argument) && array_is_list($argument) ? array_values($argument) : [$argument];
+                }
 
                 if ($arrays === []) {
                     return [];
@@ -148,7 +167,10 @@ trait RegistersCollectionBuiltins
                 $callback = $arguments[1] ?? null;
 
                 if ($items === []) {
-                    return $evaluator->collapseSequence([]);
+                    throw new EvaluationException(
+                        'Error D3139: The $single() function expected exactly 1 matching result.  Instead it matched 0.',
+                        'D3139'
+                    );
                 }
 
                 $matches = [];
@@ -217,7 +239,9 @@ trait RegistersCollectionBuiltins
                 $items = $evaluator->toSequence($arguments[0] ?? null);
                 shuffle($items);
 
-                return $evaluator->collapseSequence($items);
+                return is_array($arguments[0] ?? null) && array_is_list($arguments[0] ?? null)
+                    ? array_values($items)
+                    : $evaluator->collapseSequence($items);
             }, '<a:a>'),
         ];
     }
