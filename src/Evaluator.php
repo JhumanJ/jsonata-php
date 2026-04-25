@@ -381,6 +381,12 @@ class Evaluator
      */
     private function evaluateArrayConstructor(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
+        if (($ast['target']['type'] ?? null) === 'identifier') {
+            return $this->arrayConstructorFromValue(
+                $this->accessProperty($context, (string) $ast['target']['name'], true)
+            );
+        }
+
         return $this->arrayConstructorFromValue(
             $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
         );
@@ -395,6 +401,8 @@ class Evaluator
             return [];
         }
 
+        $value = $this->tupleValue($value);
+
         return is_array($value) && array_is_list($value)
             ? array_values($value)
             : [$value];
@@ -402,7 +410,7 @@ class Evaluator
 
     private function resolveIdentifier(string $name, mixed $context): mixed
     {
-        return $this->accessProperty($context, $name);
+        return $this->accessProperty($context, $name, true);
     }
 
     private function accessProperty(mixed $target, string $name, bool $preserveDirectArray = false): mixed
@@ -418,7 +426,7 @@ class Evaluator
                 return $this->wrapTupleResult(
                     $direct,
                     $this->tupleBindings($target),
-                    $target
+                    is_array($this->tupleValue($target)) && array_is_list($this->tupleValue($target)) ? null : $target
                 );
             }
 
@@ -776,7 +784,7 @@ class Evaluator
         $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $results = [];
 
-        foreach ($this->toSequence($target) as $item) {
+        foreach ($this->pathInputSequence($target) as $item) {
             $value = match ($ast['step']['type'] ?? null) {
                 'call' => $this->evaluatePathStepCall($ast['step'], $item, $environment, $rootContext),
                 'partial' => $this->evaluateChain($ast['step'], $item, $item, $environment, $rootContext),
@@ -784,6 +792,17 @@ class Evaluator
             };
 
             if ($this->isMissing($value)) {
+                continue;
+            }
+
+            if ($this->isTuple($value)
+                && is_array($this->tupleValue($value))
+                && array_is_list($this->tupleValue($value))
+                && ! $this->pathStepPreservesArray($ast['step'])) {
+                foreach ($this->pathInputSequence($value) as $nestedValue) {
+                    $results[] = $nestedValue;
+                }
+
                 continue;
             }
 
@@ -798,9 +817,23 @@ class Evaluator
             $results[] = $value;
         }
 
-        return $this->hasArrayConstructorRoot($ast['target'])
+        return $this->hasArrayConstructorRoot($ast['target']) || ($ast['step']['type'] ?? null) === 'array_constructor'
             ? array_values($results)
             : $this->collapseSequence($results);
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function pathInputSequence(mixed $target): array
+    {
+        if ($this->isTuple($target) && is_array($this->tupleValue($target)) && array_is_list($this->tupleValue($target))) {
+            return $this->toSequence(
+                $this->wrapTupleResult($this->tupleValue($target), $this->tupleBindings($target), $this->tupleParent($target))
+            );
+        }
+
+        return $this->toSequence($target);
     }
 
     /**
@@ -808,9 +841,35 @@ class Evaluator
      */
     private function pathStepPreservesArray(array $ast): bool
     {
+        if ($this->astContainsType($ast, 'parent_context')) {
+            return false;
+        }
+
+        if (in_array($ast['type'] ?? null, ['array', 'array_constructor'], true)) {
+            return true;
+        }
+
         return ($ast['type'] ?? null) === 'call'
             && ($ast['callee']['type'] ?? null) === 'variable'
             && ($ast['callee']['name'] ?? null) === '$zip';
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function astContainsType(array $ast, string $type): bool
+    {
+        if (($ast['type'] ?? null) === $type) {
+            return true;
+        }
+
+        foreach ($ast as $value) {
+            if (is_array($value) && $this->astContainsType($value, $type)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1072,7 +1131,7 @@ class Evaluator
     private function filterSequence(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $sequence = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
-        $items = $this->toSequence($sequence);
+        $items = $this->pathInputSequence($sequence);
 
         if ($items === []) {
             return $this->missingValue;
@@ -1164,7 +1223,7 @@ class Evaluator
      */
     private function evaluateGroup(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
-        $sequence = $this->toSequence(
+        $sequence = $this->pathInputSequence(
             $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
         );
         $grouped = [];
@@ -1691,7 +1750,7 @@ class Evaluator
      */
     private function evaluateSort(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
-        $items = $this->toSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
+        $items = $this->pathInputSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
         $sorted = $items;
 
         usort($sorted, function (mixed $left, mixed $right) use ($ast, &$environment, $rootContext): int {
@@ -1717,7 +1776,7 @@ class Evaluator
      */
     private function evaluateObjectMap(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
-        $items = $this->toSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
+        $items = $this->pathInputSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
         $results = [];
 
         foreach ($items as $item) {

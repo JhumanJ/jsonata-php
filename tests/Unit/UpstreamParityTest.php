@@ -294,6 +294,7 @@ function jsonata_upstream_enabled_case_ids(): array
     }
 
     $fullyCompatibleGroups = [
+        'array-constructor',
         'comparison-operators',
         'comments',
         'context',
@@ -355,6 +356,7 @@ function jsonata_upstream_enabled_case_ids(): array
         'hof-reduce',
         'hof-single',
         'hof-zip-map',
+        'inclusion-operator',
         'lambdas',
         'literals',
         'missing-paths',

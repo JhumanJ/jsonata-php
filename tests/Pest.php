@@ -165,18 +165,19 @@ async function main() {
   const context = JSON.parse(process.argv[3]);
   const bindings = JSON.parse(process.argv[4]);
   const jsonata = require(jsonataPath);
+  const emit = (payload) => process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 
   try {
     const compiled = jsonata(expression);
     try {
       const result = await compiled.evaluate(context, bindings);
-      process.stdout.write(JSON.stringify({
+      emit({
         ok: true,
         result: typeof result === 'undefined' ? null : result,
         undefinedResult: typeof result === 'undefined'
-      }));
+      });
     } catch (error) {
-      process.stdout.write(JSON.stringify({
+      emit({
         ok: false,
         error: {
           code: error && error.code ? error.code : null,
@@ -184,10 +185,10 @@ async function main() {
           position: error && typeof error.position !== 'undefined' ? error.position : null,
           message: error && error.message ? error.message : String(error)
         }
-      }));
+      });
     }
   } catch (error) {
-    process.stdout.write(JSON.stringify({
+    emit({
       ok: false,
       error: {
         code: error && error.code ? error.code : null,
@@ -195,7 +196,7 @@ async function main() {
         position: error && typeof error.position !== 'undefined' ? error.position : null,
         message: error && error.message ? error.message : String(error)
       }
-    }));
+    });
   }
 }
 
