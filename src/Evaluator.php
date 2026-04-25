@@ -162,7 +162,7 @@ class Evaluator
             'group' => $this->evaluateGroup($ast, $context, $environment, $rootContext),
             'array' => $this->evaluateArrayLiteral($ast, $context, $environment, $rootContext),
             'object' => $this->evaluateObjectLiteral($ast, $context, $environment, $rootContext),
-            'function' => $this->createClosure($ast, $environment, $rootContext),
+            'function' => $this->createClosure($ast, $context, $environment, $rootContext),
             'transform' => $this->createTransformClosure($ast, $environment, $rootContext),
             'call' => $this->evaluateCall($ast, $context, $environment, $rootContext),
             'partial' => $this->evaluatePartial($ast, $context, $environment, $rootContext),
@@ -787,7 +787,7 @@ class Evaluator
                 continue;
             }
 
-            if (is_array($value) && array_is_list($value)) {
+            if (is_array($value) && array_is_list($value) && ! $this->pathStepPreservesArray($ast['step'])) {
                 foreach ($value as $nestedValue) {
                     $results[] = $nestedValue;
                 }
@@ -801,6 +801,16 @@ class Evaluator
         return $this->hasArrayConstructorRoot($ast['target'])
             ? array_values($results)
             : $this->collapseSequence($results);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function pathStepPreservesArray(array $ast): bool
+    {
+        return ($ast['type'] ?? null) === 'call'
+            && ($ast['callee']['type'] ?? null) === 'variable'
+            && ($ast['callee']['name'] ?? null) === '$zip';
     }
 
     /**
@@ -1158,6 +1168,7 @@ class Evaluator
             $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
         );
         $grouped = [];
+        $deferredGroups = [];
 
         foreach ($sequence as $item) {
             $itemKeys = [];
@@ -1167,10 +1178,15 @@ class Evaluator
                 $this->assertObjectKeyResult($keyResult, $pair, $ast);
 
                 $keys = $this->toSequence($keyResult);
-                $value = $this->evaluateAst($pair['value'], $item, $environment, $rootContext);
+                $deferValue = ($pair['value']['type'] ?? null) === 'call';
+                $value = $this->missingValue;
 
-                if ($this->isMissing($value)) {
-                    continue;
+                if (! $deferValue) {
+                    $value = $this->evaluateAst($pair['value'], $item, $environment, $rootContext);
+
+                    if ($this->isMissing($value)) {
+                        continue;
+                    }
                 }
 
                 foreach ($keys as $key) {
@@ -1198,9 +1214,24 @@ class Evaluator
 
                     $itemKeys[$key] = true;
 
+                    if ($deferValue) {
+                        $deferredGroups[$key] ??= [
+                            'ast' => $pair['value'],
+                            'items' => [],
+                        ];
+                        $deferredGroups[$key]['items'][] = $item;
+
+                        continue;
+                    }
+
                     if (! array_key_exists($key, $grouped)) {
                         $grouped[$key] = $value;
 
+                        continue;
+                    }
+
+                    if (in_array($pair['value']['type'] ?? null, ['call', 'subscript'], true)
+                        && $this->groupedValueContains($grouped[$key], $value)) {
                         continue;
                     }
 
@@ -1213,7 +1244,35 @@ class Evaluator
             }
         }
 
+        foreach ($deferredGroups as $key => $deferredGroup) {
+            $value = $this->evaluateAst(
+                $deferredGroup['ast'],
+                $this->collapseSequence($deferredGroup['items']),
+                $environment,
+                $rootContext
+            );
+
+            if (! $this->isMissing($value)) {
+                $grouped[$key] = $value;
+            }
+        }
+
         return $grouped;
+    }
+
+    private function groupedValueContains(mixed $existing, mixed $value): bool
+    {
+        if (is_array($existing) && array_is_list($existing)) {
+            foreach ($existing as $item) {
+                if ($this->compareValues($item, $value)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return $this->compareValues($existing, $value);
     }
 
     /**
@@ -1237,11 +1296,13 @@ class Evaluator
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
      */
-    private function createClosure(array $ast, array &$environment, mixed $rootContext): Closure
+    private function createClosure(array $ast, mixed $definitionContext, array &$environment, mixed $rootContext): Closure
     {
-        $closure = function (array $arguments, mixed $callContext = null) use ($ast, &$environment, $rootContext): mixed {
+        $closure = function (array $arguments, mixed $callContext = null) use ($ast, $definitionContext, &$environment, $rootContext): mixed {
             $localEnvironment = $environment;
-            $effectiveContext = $callContext ?? $rootContext;
+            $effectiveContext = $ast['parameters'] === []
+                ? $definitionContext
+                : ($callContext ?? $definitionContext);
 
             if (($ast['signature'] ?? null) !== null) {
                 $arguments = Signature::parse($ast['signature'])->validate($arguments, $effectiveContext, $this);
