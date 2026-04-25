@@ -7,10 +7,9 @@ use JsonataPhp\Evaluator;
 trait RegistersObjectBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function objectBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function objectBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('lookup', function (array $arguments) use ($evaluator): mixed {
@@ -65,7 +64,7 @@ trait RegistersObjectBuiltins
 
                 return $evaluator->collapseSequence($results);
             }, '<o-f:a>'),
-            $this->builtin('sift', function (array $arguments): ?array {
+            $this->builtin('sift', function (array $arguments) use ($evaluator): mixed {
                 $input = $arguments[0] ?? null;
                 $callback = $arguments[1] ?? null;
 
@@ -75,12 +74,12 @@ trait RegistersObjectBuiltins
 
                 $result = [];
                 foreach ($input as $key => $value) {
-                    if ($callback($this->support->hofArguments($callback, $value, $key, $input), $value)) {
+                    if ($evaluator->isTruthyPublic($callback($this->support->hofArguments($callback, $value, $key, $input), $value))) {
                         $result[$key] = $value;
                     }
                 }
 
-                return $result === [] ? null : $result;
+                return $result === [] ? $evaluator->missingValuePublic() : $result;
             }, '<o-f?:o>'),
             $this->builtin('clone', function (array $arguments): mixed {
                 $encoded = json_encode($arguments[0] ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

@@ -66,6 +66,6 @@ class BuiltinDefinition
 
     private function preservesMissingArguments(): bool
     {
-        return in_array($this->name, ['boolean', 'count', 'error', 'exists', 'join', 'not', 'type', 'zip'], true);
+        return in_array($this->name, ['append', 'boolean', 'count', 'error', 'exists', 'join', 'type', 'zip'], true);
     }
 }

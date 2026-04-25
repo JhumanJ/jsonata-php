@@ -7,10 +7,9 @@ use JsonataPhp\Evaluator;
 trait RegistersEncodingBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function encodingBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function encodingBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('base64encode', fn (array $arguments): string => base64_encode($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),

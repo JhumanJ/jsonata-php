@@ -295,15 +295,19 @@ function jsonata_upstream_enabled_case_ids(): array
 
     $fullyCompatibleGroups = [
         'comparison-operators',
+        'comments',
         'context',
         'blocks',
+        'boolean-expresssions',
         'coalescing-operator',
+        'conditionals',
         'default-operator',
         'descendent-operator',
         'encoding',
         'fields',
         'function-abs',
         'function-assert',
+        'function-append',
         'function-average',
         'function-boolean',
         'function-ceil',
@@ -329,6 +333,7 @@ function jsonata_upstream_enabled_case_ids(): array
         'function-round',
         'function-reverse',
         'function-shuffle',
+        'function-sift',
         'function-sort',
         'function-split',
         'function-spread',
@@ -345,6 +350,7 @@ function jsonata_upstream_enabled_case_ids(): array
         'hof-map',
         'hof-reduce',
         'hof-single',
+        'lambdas',
         'literals',
         'missing-paths',
         'multiple-array-selectors',
@@ -353,8 +359,10 @@ function jsonata_upstream_enabled_case_ids(): array
         'parentheses',
         'predicates',
         'quoted-selectors',
+        'simple-array-selectors',
         'string-concat',
         'variables',
+        'wildcards',
     ];
 
     foreach (jsonata_test_upstream_cases($fullyCompatibleGroups) as $case) {

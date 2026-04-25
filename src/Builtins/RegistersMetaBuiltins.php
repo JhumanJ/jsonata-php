@@ -8,10 +8,9 @@ use JsonataPhp\Evaluator;
 trait RegistersMetaBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function metaBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function metaBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('exists', fn (array $arguments): bool => array_key_exists(0, $arguments) && ! $this->support->isMissingLike($arguments[0], $evaluator), '<x:b>'),

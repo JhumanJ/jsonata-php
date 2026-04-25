@@ -9,10 +9,9 @@ use JsonataPhp\Evaluator;
 trait RegistersCollectionBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function collectionBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function collectionBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         $preservesExplicitArray = static function (array $arguments): bool {
             foreach ($arguments as $argument) {

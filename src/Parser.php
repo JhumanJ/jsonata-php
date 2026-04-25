@@ -180,7 +180,7 @@ class Parser
     {
         $expression = $this->parseAnd($stream);
 
-        while ($stream->match('operator', 'or')) {
+        while ($this->matchWordOperator($stream, 'or')) {
             $expression = [
                 'type' => 'binary',
                 'operator' => 'or',
@@ -199,7 +199,7 @@ class Parser
     {
         $expression = $this->parseEquality($stream);
 
-        while ($stream->match('operator', 'and')) {
+        while ($this->matchWordOperator($stream, 'and')) {
             $expression = [
                 'type' => 'binary',
                 'operator' => 'and',
@@ -249,7 +249,7 @@ class Parser
             $operator = null;
 
             foreach (['<', '<=', '>', '>=', 'in'] as $candidate) {
-                if ($stream->match('operator', $candidate)) {
+                if ($candidate === 'in' ? $this->matchWordOperator($stream, $candidate) : $stream->match('operator', $candidate)) {
                     $operator = $candidate;
                     break;
                 }
@@ -826,9 +826,7 @@ class Parser
     {
         return match ($expression['type'] ?? null) {
             'literal' => is_int($expression['value']) || is_float($expression['value']),
-            'unary' => ($expression['operator'] ?? null) === '-'
-                && ($expression['argument']['type'] ?? null) === 'literal'
-                && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),
+            'unary' => ($expression['operator'] ?? null) === '-',
             'array' => $expression['items'] !== [] && $this->allSelectorItems($expression['items']),
             'binary' => in_array($expression['operator'] ?? null, ['+', '-', '*', '/', '%'], true),
             default => false,
@@ -842,9 +840,7 @@ class Parser
     {
         return match ($expression['type'] ?? null) {
             'literal' => is_int($expression['value']) || is_float($expression['value']) || is_bool($expression['value']),
-            'unary' => ($expression['operator'] ?? null) === '-'
-                && ($expression['argument']['type'] ?? null) === 'literal'
-                && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),
+            'unary' => ($expression['operator'] ?? null) === '-',
             'binary' => ($expression['operator'] ?? null) === '..',
             default => false,
         };
@@ -862,5 +858,10 @@ class Parser
         }
 
         return true;
+    }
+
+    private function matchWordOperator(TokenStream $stream, string $operator): bool
+    {
+        return $stream->match('operator', $operator) || $stream->match('identifier', $operator);
     }
 }

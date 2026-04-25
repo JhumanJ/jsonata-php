@@ -415,7 +415,6 @@ class Lexer
 
         return match ($buffer) {
             'function' => ['type' => 'keyword', 'value' => 'function', 'position' => $position],
-            'or', 'and', 'in' => ['type' => 'operator', 'value' => $buffer, 'position' => $position],
             'true' => ['type' => 'boolean', 'value' => true, 'position' => $position],
             'false' => ['type' => 'boolean', 'value' => false, 'position' => $position],
             'null' => ['type' => 'null', 'value' => null, 'position' => $position],

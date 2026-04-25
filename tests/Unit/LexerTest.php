@@ -20,7 +20,7 @@ describe('Lexer', function () {
             'identifier',
             'operator',
             'string',
-            'operator',
+            'identifier',
             'identifier',
             'operator',
             'string',

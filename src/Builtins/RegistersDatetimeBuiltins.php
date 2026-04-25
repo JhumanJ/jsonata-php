@@ -7,10 +7,9 @@ use JsonataPhp\Evaluator;
 trait RegistersDatetimeBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function datetimeBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function datetimeBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('toMillis', function (array $arguments) use ($evaluator): ?int {

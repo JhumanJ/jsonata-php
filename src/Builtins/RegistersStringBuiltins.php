@@ -8,10 +8,9 @@ use JsonataPhp\Evaluator;
 trait RegistersStringBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function stringBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function stringBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('string', fn (array $arguments): string => $evaluator->stringifyPublic(

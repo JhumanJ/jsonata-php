@@ -36,10 +36,9 @@ class Functions
     ) {}
 
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<string, Closure>
      */
-    public function defaultEnvironment(Evaluator $evaluator, array $rootContext): array
+    public function defaultEnvironment(Evaluator $evaluator, mixed $rootContext): array
     {
         $this->support = new BuiltinSupport;
 
@@ -464,9 +463,8 @@ class Functions
     {
         $tokens = $this->lexer->tokenize($expression);
         $ast = $this->parser->parse($tokens);
-        $rootContext = is_array($focus) ? $focus : ['value' => $focus];
 
-        return $evaluator->evaluateWithContext($ast, $focus, $rootContext);
+        return $evaluator->evaluateWithContext($ast, $focus, $focus);
     }
 
     protected function jsonTypeSymbol(mixed $value, Evaluator $evaluator): string

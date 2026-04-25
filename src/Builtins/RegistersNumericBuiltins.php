@@ -8,10 +8,9 @@ use JsonataPhp\Evaluator;
 trait RegistersNumericBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function numericBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function numericBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('sum', function (array $arguments) use ($evaluator): int|float {

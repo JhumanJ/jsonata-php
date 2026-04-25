@@ -18,22 +18,18 @@ class Evaluator
 
     /**
      * @param  array<string, mixed>  $ast
-     * @param  array<string, mixed>  $rootContext
-     */
-    /**
      * @param  array<string, mixed>  $bindings
      */
-    public function evaluate(array $ast, array $rootContext, array $bindings = []): mixed
+    public function evaluate(array $ast, mixed $rootContext, array $bindings = []): mixed
     {
         return $this->evaluateWithContext($ast, $rootContext, $rootContext, $bindings);
     }
 
     /**
      * @param  array<string, mixed>  $ast
-     * @param  array<string, mixed>  $rootContext
      * @param  array<string, mixed>  $bindings
      */
-    public function evaluateWithContext(array $ast, mixed $context, array $rootContext, array $bindings = []): mixed
+    public function evaluateWithContext(array $ast, mixed $context, mixed $rootContext, array $bindings = []): mixed
     {
         $environment = [
             ...$this->functions->defaultEnvironment($this, $rootContext),
@@ -120,9 +116,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateAst(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateAst(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         return match ($ast['type']) {
             'literal' => $this->normalizeLiteral($ast['value']),
@@ -137,7 +132,8 @@ class Evaluator
             'binary' => $this->evaluateBinary($ast, $context, $environment, $rootContext),
             'property' => $this->accessProperty(
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
-                (string) $ast['name']
+                (string) $ast['name'],
+                ($ast['target']['type'] ?? null) === 'variable'
             ),
             'path_step' => $this->evaluatePathStep($ast, $context, $environment, $rootContext),
             'wildcard' => $this->evaluateWildcard(
@@ -192,9 +188,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateSequence(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateSequence(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $result = $this->missingValue;
 
@@ -208,9 +203,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateGrouping(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateGrouping(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $localEnvironment = $environment;
 
@@ -220,9 +214,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateAssignment(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateAssignment(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         if (($ast['target']['type'] ?? null) !== 'variable') {
             throw new EvaluationException(
@@ -239,9 +232,8 @@ class Evaluator
 
     /**
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function resolveVariable(string $name, mixed $context, array $environment, array $rootContext): mixed
+    private function resolveVariable(string $name, mixed $context, array $environment, mixed $rootContext): mixed
     {
         if ($this->isTuple($context)) {
             $binding = $this->tupleBindings($context)[$name] ?? null;
@@ -253,16 +245,15 @@ class Evaluator
         return match ($name) {
             '$' => $this->tupleValue($context),
             '$$' => $rootContext,
-            default => $environment[$name] ?? $this->missingValue,
+            default => array_key_exists($name, $environment) ? $environment[$name] : $this->missingValue,
         };
     }
 
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateConditional(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateConditional(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $test = $this->evaluateAst($ast['test'], $context, $environment, $rootContext);
 
@@ -280,9 +271,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateUnary(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateUnary(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $value = $this->evaluateAst($ast['argument'], $context, $environment, $rootContext);
 
@@ -302,14 +292,21 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateBinary(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateBinary(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $left = $this->evaluateAst($ast['left'], $context, $environment, $rootContext);
 
         if ($ast['operator'] === '~>') {
             return $this->evaluateChain($ast['right'], $left, $context, $environment, $rootContext);
+        }
+
+        if ($ast['operator'] === 'and') {
+            return $this->isTruthy($left) && $this->isTruthy($this->evaluateAst($ast['right'], $context, $environment, $rootContext));
+        }
+
+        if ($ast['operator'] === 'or') {
+            return $this->isTruthy($left) || $this->isTruthy($this->evaluateAst($ast['right'], $context, $environment, $rootContext));
         }
 
         $right = $this->evaluateAst($ast['right'], $context, $environment, $rootContext);
@@ -330,8 +327,6 @@ class Evaluator
             '**' => $this->evaluateNumericBinary($left, $right, '**'),
             '/' => $this->evaluateNumericBinary($left, $right, '/'),
             '%' => $this->evaluateNumericBinary($left, $right, '%'),
-            'and' => $this->isTruthy($left) && $this->isTruthy($right),
-            'or' => $this->isTruthy($left) || $this->isTruthy($right),
             '&' => $this->stringify($left).$this->stringify($right),
             '..' => $this->buildRange($left, $right),
             default => throw new EvaluationException(
@@ -343,10 +338,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function evaluateArrayLiteral(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function evaluateArrayLiteral(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $items = [];
 
@@ -354,8 +348,6 @@ class Evaluator
             $value = $this->evaluateAst($item, $context, $environment, $rootContext);
 
             if ($this->isMissing($value)) {
-                $items[] = null;
-
                 continue;
             }
 
@@ -381,10 +373,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function evaluateArrayConstructor(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function evaluateArrayConstructor(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         return $this->arrayConstructorFromValue(
             $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
@@ -410,14 +401,14 @@ class Evaluator
         return $this->accessProperty($context, $name);
     }
 
-    private function accessProperty(mixed $target, string $name): mixed
+    private function accessProperty(mixed $target, string $name, bool $preserveDirectArray = false): mixed
     {
         if ($this->isMissing($target) || $target === null) {
             return $this->missingValue;
         }
 
         if ($this->isTuple($target)) {
-            $direct = $this->accessProperty($this->tupleValue($target), $name);
+            $direct = $this->accessProperty($this->tupleValue($target), $name, $preserveDirectArray);
 
             if (! $this->isMissing($direct)) {
                 return $this->wrapTupleResult(
@@ -431,7 +422,7 @@ class Evaluator
 
             if ($lookupParent !== null) {
                 return $this->wrapTupleResult(
-                    $this->accessProperty($lookupParent, $name),
+                    $this->accessProperty($lookupParent, $name, $preserveDirectArray),
                     $this->tupleBindings($target),
                     $lookupParent,
                     $lookupParent
@@ -462,6 +453,10 @@ class Evaluator
             }
 
             return $this->collapseSequence($projected);
+        }
+
+        if ($preserveDirectArray && is_array($target) && array_key_exists($name, $target)) {
+            return $this->makeTuple($target[$name], [], $target);
         }
 
         if (is_array($target) && array_key_exists($name, $target)) {
@@ -701,6 +696,10 @@ class Evaluator
             foreach ($target as $item) {
                 $value = $this->evaluateWildcard($item);
                 if ($this->isMissing($value)) {
+                    if (! is_array($item)) {
+                        $values[] = $this->wrapTupleResult($item, []);
+                    }
+
                     continue;
                 }
 
@@ -717,10 +716,21 @@ class Evaluator
         }
 
         if (is_array($target)) {
-            return $this->collapseSequence(array_map(
-                fn (mixed $value): mixed => $this->wrapTupleResult($value, []),
-                array_values($target)
-            ));
+            $values = [];
+
+            foreach (array_values($target) as $value) {
+                if (is_array($value) && array_is_list($value)) {
+                    foreach ($value as $nestedValue) {
+                        $values[] = $this->wrapTupleResult($nestedValue, []);
+                    }
+
+                    continue;
+                }
+
+                $values[] = $this->wrapTupleResult($value, []);
+            }
+
+            return $this->collapseSequence($values);
         }
 
         return $this->missingValue;
@@ -756,9 +766,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluatePathStep(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluatePathStep(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $results = [];
@@ -785,15 +794,34 @@ class Evaluator
             $results[] = $value;
         }
 
-        return $this->collapseSequence($results);
+        return $this->hasArrayConstructorRoot($ast['target'])
+            ? array_values($results)
+            : $this->collapseSequence($results);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function hasArrayConstructorRoot(array $ast): bool
+    {
+        if (($ast['type'] ?? null) === 'array_constructor') {
+            return true;
+        }
+
+        foreach (['target', 'callee'] as $key) {
+            if (isset($ast[$key]) && is_array($ast[$key]) && $this->hasArrayConstructorRoot($ast[$key])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluatePathStepCall(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluatePathStepCall(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
@@ -821,9 +849,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateParent(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateParent(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $parents = [];
@@ -864,10 +891,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function collectParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function collectParentValues(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         return match ($ast['type']) {
             'identifier' => $this->expandParentMatches($context, $this->resolveIdentifier((string) $ast['name'], $context)),
@@ -889,10 +915,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function collectPropertyParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function collectPropertyParentValues(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $baseTarget = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $parents = [];
@@ -910,10 +935,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function collectSubscriptParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function collectSubscriptParentValues(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $baseTarget = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $index = $this->evaluateAst($ast['index'], $context, $environment, $rootContext);
@@ -932,10 +956,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function collectWildcardParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function collectWildcardParentValues(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $baseTarget = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $parents = [];
@@ -953,10 +976,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function collectFilterParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function collectFilterParentValues(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $baseTarget = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $parents = [];
@@ -973,10 +995,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, mixed>
      */
-    private function collectNestedParentValues(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function collectNestedParentValues(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $baseTarget = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $parents = [];
@@ -1033,9 +1054,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function filterSequence(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function filterSequence(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $sequence = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $items = $this->toSequence($sequence);
@@ -1046,8 +1066,19 @@ class Evaluator
 
         $matches = [];
 
-        foreach ($items as $item) {
+        foreach ($items as $index => $item) {
             $predicate = $this->evaluateAst($ast['predicate'], $item, $environment, $rootContext);
+
+            if ($this->isNumericSelector($predicate)) {
+                $resolvedIndex = $this->normalizeNumericSelector($predicate);
+                $resolvedIndex = $resolvedIndex < 0 ? count($items) + $resolvedIndex : $resolvedIndex;
+
+                if ($index === $resolvedIndex) {
+                    $matches[] = $item;
+                }
+
+                continue;
+            }
 
             if ($this->isTruthy($predicate)) {
                 $matches[] = $item;
@@ -1060,10 +1091,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<string, mixed>
      */
-    private function evaluateObjectLiteral(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function evaluateObjectLiteral(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $object = [];
 
@@ -1089,10 +1119,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<string, mixed>
      */
-    private function evaluateGroup(array $ast, mixed $context, array &$environment, array $rootContext): array
+    private function evaluateGroup(array $ast, mixed $context, array &$environment, mixed $rootContext): array
     {
         $sequence = $this->toSequence(
             $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
@@ -1134,9 +1163,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function createClosure(array $ast, array &$environment, array $rootContext): Closure
+    private function createClosure(array $ast, array &$environment, mixed $rootContext): Closure
     {
         $closure = function (array $arguments, mixed $callContext = null) use ($ast, &$environment, $rootContext): mixed {
             $localEnvironment = $environment;
@@ -1161,9 +1189,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function createTransformClosure(array $ast, array $environment, array $rootContext): Closure
+    private function createTransformClosure(array $ast, array $environment, mixed $rootContext): Closure
     {
         $closure = function (array $arguments, mixed $callContext = null) use ($ast, $environment): mixed {
             $input = $arguments[0] ?? $this->missingValue;
@@ -1247,9 +1274,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateCall(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateCall(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
@@ -1274,9 +1300,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluatePartial(array $ast, mixed $context, array &$environment, array $rootContext): Closure
+    private function evaluatePartial(array $ast, mixed $context, array &$environment, mixed $rootContext): Closure
     {
         $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
@@ -1293,9 +1318,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateChain(array $ast, mixed $input, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateChain(array $ast, mixed $input, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         if ($input instanceof Closure) {
             $next = $this->evaluateAst($ast, $context, $environment, $rootContext);
@@ -1320,6 +1344,10 @@ class Evaluator
             $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
             if (! $callee instanceof Closure) {
+                if ($callee instanceof RegexPattern) {
+                    return preg_match($callee->toPcre(), $this->stringify($input)) === 1;
+                }
+
                 throw new EvaluationException(
                     'Error T2006: The right side of the function application operator ~> must be a function.',
                     'T2006'
@@ -1353,6 +1381,10 @@ class Evaluator
         $callee = $this->evaluateAst($ast, $context, $environment, $rootContext);
 
         if (! $callee instanceof Closure) {
+            if ($callee instanceof RegexPattern) {
+                return preg_match($callee->toPcre(), $this->stringify($input)) === 1;
+            }
+
             throw new EvaluationException(
                 'Error T2006: The right side of the function application operator ~> must be a function.',
                 'T2006'
@@ -1392,14 +1424,13 @@ class Evaluator
     /**
      * @param  array<int, array<string, mixed>>  $argumentAsts
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
     private function createPartialApplication(
         Closure $callee,
         array $argumentAsts,
         mixed $context,
         array $environment,
-        array $rootContext,
+        mixed $rootContext,
         array $boundArguments = [],
     ): Closure {
         $closure = function (array $providedArguments, mixed $callContext = null) use (
@@ -1443,7 +1474,6 @@ class Evaluator
      * @param  array<int, array<string, mixed>>  $argumentAsts
      * @param  array<int, mixed>  $providedArguments
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array{0: array<int, mixed>, 1: int}
      */
     private function resolveCallArguments(
@@ -1451,7 +1481,7 @@ class Evaluator
         array $providedArguments,
         mixed $context,
         array $environment,
-        array $rootContext,
+        mixed $rootContext,
     ): array {
         $resolvedArguments = [];
         $providedIndex = 0;
@@ -1510,9 +1540,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateSort(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateSort(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $items = $this->toSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
         $sorted = $items;
@@ -1537,9 +1566,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateObjectMap(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateObjectMap(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $items = $this->toSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
         $results = [];
@@ -1555,10 +1583,9 @@ class Evaluator
      * @param  array<string, mixed>  $ast
      * @param  array<int, int|string>  $contextPath
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         return match ($ast['type']) {
             'identifier' => $this->resolveTransformIdentifierPaths((string) $ast['name'], $root, $contextPath),
@@ -1594,10 +1621,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformPropertyPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformPropertyPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         $basePaths = $this->resolveTransformPaths($ast['target'], $root, $contextPath, $environment, $rootContext);
         $paths = [];
@@ -1626,10 +1652,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformWildcardPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformWildcardPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         $basePaths = $this->resolveTransformPaths($ast['target'], $root, $contextPath, $environment, $rootContext);
         $paths = [];
@@ -1646,10 +1671,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformDescendantPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformDescendantPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         $basePaths = $this->resolveTransformPaths($ast['target'], $root, $contextPath, $environment, $rootContext);
         $paths = [];
@@ -1666,10 +1690,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformSubscriptPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformSubscriptPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         $basePaths = $this->resolveTransformPaths($ast['target'], $root, $contextPath, $environment, $rootContext);
         $indexValue = $this->evaluateAst($ast['index'], $root, $environment, $rootContext);
@@ -1692,10 +1715,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformFilterPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformFilterPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         $basePaths = $this->resolveTransformPaths($ast['target'], $root, $contextPath, $environment, $rootContext);
         $paths = [];
@@ -1741,10 +1763,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformSequencePaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformSequencePaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         $localEnvironment = $environment;
         $paths = [];
@@ -1759,10 +1780,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformAssignmentPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformAssignmentPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         if (($ast['target']['type'] ?? null) !== 'variable') {
             return [];
@@ -1778,10 +1798,9 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, array<int, int|string>>
      */
-    private function resolveTransformCallPaths(array $ast, mixed &$root, array $contextPath, array &$environment, array $rootContext): array
+    private function resolveTransformCallPaths(array $ast, mixed &$root, array $contextPath, array &$environment, mixed $rootContext): array
     {
         if (($ast['callee']['type'] ?? null) !== 'variable' || ($ast['callee']['name'] ?? null) !== '$lookup') {
             return [];
@@ -2353,9 +2372,8 @@ class Evaluator
     /**
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
-     * @param  array<string, mixed>  $rootContext
      */
-    private function evaluateBind(array $ast, mixed $context, array &$environment, array $rootContext): mixed
+    private function evaluateBind(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $items = $this->toSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
         $results = [];
