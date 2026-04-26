@@ -293,6 +293,115 @@ function jsonata_upstream_enabled_case_ids(): array
         }
     }
 
+    $fullyCompatibleGroups = [
+        'array-constructor',
+        'comparison-operators',
+        'comments',
+        'context',
+        'blocks',
+        'boolean-expresssions',
+        'closures',
+        'coalescing-operator',
+        'conditionals',
+        'default-operator',
+        'descendent-operator',
+        'encoding',
+        'errors',
+        'fields',
+        'flattening',
+        'function-abs',
+        'function-applications',
+        'function-assert',
+        'function-append',
+        'function-average',
+        'function-boolean',
+        'function-ceil',
+        'function-contains',
+        'function-count',
+        'function-decodeUrl',
+        'function-decodeUrlComponent',
+        'function-each',
+        'function-encodeUrl',
+        'function-encodeUrlComponent',
+        'function-error',
+        'function-eval',
+        'function-exists',
+        'function-signatures',
+        'function-floor',
+        'function-fromMillis',
+        'function-formatBase',
+        'function-formatInteger',
+        'function-formatNumber',
+        'function-distinct',
+        'function-join',
+        'function-keys',
+        'function-length',
+        'function-lookup',
+        'function-lowercase',
+        'function-max',
+        'function-merge',
+        'function-number',
+        'function-pad',
+        'function-parseInteger',
+        'function-power',
+        'function-replace',
+        'function-round',
+        'function-reverse',
+        'function-shuffle',
+        'function-sift',
+        'function-sort',
+        'function-split',
+        'function-spread',
+        'function-sqrt',
+        'function-string',
+        'function-substring',
+        'function-substringAfter',
+        'function-substringBefore',
+        'function-sum',
+        'function-tomillis',
+        'function-trim',
+        'function-typeOf',
+        'function-uppercase',
+        'function-zip',
+        'higher-order-functions',
+        'hof-filter',
+        'hof-map',
+        'hof-reduce',
+        'hof-single',
+        'hof-zip-map',
+        'inclusion-operator',
+        'joins',
+        'lambdas',
+        'literals',
+        'matchers',
+        'missing-paths',
+        'multiple-array-selectors',
+        'null',
+        'numeric-operators',
+        'object-constructor',
+        'parent-operator',
+        'parentheses',
+        'partial-application',
+        'performance',
+        'predicates',
+        'quoted-selectors',
+        'range-operator',
+        'regex',
+        'simple-array-selectors',
+        'sorting',
+        'string-concat',
+        'tail-recursion',
+        'token-conversion',
+        'transform',
+        'transforms',
+        'variables',
+        'wildcards',
+    ];
+
+    foreach (jsonata_test_upstream_cases($fullyCompatibleGroups) as $case) {
+        $caseIds[$case['_case_id']] = true;
+    }
+
     return $caseIds;
 }
 
@@ -342,11 +451,15 @@ function jsonata_upstream_assert_case(ExpressionService $service, array $case): 
     $input = jsonata_upstream_input($case);
     $bindings = $case['bindings'] ?? [];
 
-    $js = jsonata_test_evaluate_with_local_js(
-        $case['expr'],
-        $input,
-        $bindings
-    );
+    $js = ($case['_group'] ?? null) === 'tail-recursion'
+        ? jsonata_test_expected_upstream_outcome($case)
+        : jsonata_test_evaluate_with_local_js(
+            $case['expr'],
+            $input,
+            $bindings
+        );
+
+    expect($js)->not->toBeNull($case['_case_id'].' has no expected upstream outcome.');
 
     try {
         $php = [

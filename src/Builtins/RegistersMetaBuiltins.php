@@ -8,10 +8,9 @@ use JsonataPhp\Evaluator;
 trait RegistersMetaBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function metaBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function metaBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('exists', fn (array $arguments): bool => array_key_exists(0, $arguments) && ! $this->support->isMissingLike($arguments[0], $evaluator), '<x:b>'),
@@ -22,9 +21,14 @@ trait RegistersMetaBuiltins
 
                 return $type === 'missing' ? null : $type;
             }, '<x:s>'),
-            $this->builtin('error', function (array $arguments): never {
+            $this->builtin('error', function (array $arguments) use ($evaluator): never {
                 throw new EvaluationException(
-                    sprintf('Error D3137: %s', $arguments[0] ?? '$error() function evaluated'),
+                    sprintf(
+                        'Error D3137: %s',
+                        (! array_key_exists(0, $arguments) || $evaluator->isMissing($arguments[0]))
+                            ? '$error() function evaluated'
+                            : $arguments[0]
+                    ),
                     'D3137'
                 );
             }, '<s?:x>'),
@@ -49,6 +53,15 @@ trait RegistersMetaBuiltins
                 try {
                     return $this->evaluateInline($expression, $focus, $evaluator);
                 } catch (EvaluationException $exception) {
+                    if (str_starts_with($exception->jsonataCode, 'S')) {
+                        throw new EvaluationException(
+                            sprintf('Syntax error in expression passed to function eval: "%s"', $exception->getMessage()),
+                            'D3120',
+                            $exception->position,
+                            $exception->details
+                        );
+                    }
+
                     throw new EvaluationException(
                         sprintf('Error D3121: Dynamic error evaluating the expression passed to function eval: %s', $exception->getMessage()),
                         'D3121',

@@ -5,6 +5,7 @@ namespace JsonataPhp\Builtins;
 use Closure;
 use JsonataPhp\EvaluationException;
 use JsonataPhp\Evaluator;
+use JsonataPhp\RegexPattern;
 
 class Signature
 {
@@ -83,6 +84,9 @@ class Signature
                     }
 
                     $parameters[$lastIndex]['regex'] .= $symbol === '+' ? '+?' : $symbol;
+                    if ($symbol === '?') {
+                        $parameters[$lastIndex]['optional'] = true;
+                    }
                     break;
                 case '(':
                     $endParen = self::findClosingBracket($definition, $position, '(', ')');
@@ -170,6 +174,8 @@ class Signature
 
             foreach (str_split($match) as $singleSymbol) {
                 if (($parameter['type'] ?? null) === 'a') {
+                    $argument = $arguments[$argumentIndex] ?? null;
+
                     if ($singleSymbol === 'm') {
                         $validatedArguments[] = $argument;
                         $argumentIndex++;
@@ -177,7 +183,6 @@ class Signature
                         continue;
                     }
 
-                    $argument = $arguments[$argumentIndex] ?? null;
                     $this->ensureArraySubtype($argument, $singleSymbol, $parameter, $argumentIndex + 1, $evaluator);
 
                     if ($singleSymbol !== 'a') {
@@ -200,7 +205,10 @@ class Signature
 
     public function parameterCount(): int
     {
-        return count($this->parameters);
+        return count(array_filter(
+            $this->parameters,
+            static fn (array $parameter): bool => ($parameter['optional'] ?? false) !== true
+        ));
     }
 
     private static function findClosingBracket(string $input, int $start, string $open, string $close): int
@@ -231,7 +239,7 @@ class Signature
             return 'm';
         }
 
-        if ($value instanceof Closure) {
+        if ($value instanceof Closure || $value instanceof RegexPattern) {
             return 'f';
         }
 
@@ -242,6 +250,7 @@ class Signature
             $value === null => 'l',
             is_array($value) && array_is_list($value) => 'a',
             is_array($value) => 'o',
+            is_object($value) => 'o',
             default => 'm',
         };
     }

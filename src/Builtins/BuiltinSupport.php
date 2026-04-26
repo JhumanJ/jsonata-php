@@ -9,7 +9,6 @@ use JsonataPhp\EvaluationException;
 use JsonataPhp\Evaluator;
 use JsonataPhp\RegexPattern;
 use ReflectionFunction;
-use stdClass;
 use WeakMap;
 
 class BuiltinSupport
@@ -59,9 +58,7 @@ class BuiltinSupport
 
     public function isMissingLike(mixed $value, Evaluator $evaluator): bool
     {
-        return $evaluator->isMissing($value)
-            || ($value instanceof stdClass && get_object_vars($value) === [])
-            || (is_object($value) && ! $value instanceof Closure && ! $value instanceof RegexPattern);
+        return $evaluator->isMissing($value);
     }
 
     /**
@@ -230,7 +227,7 @@ class BuiltinSupport
     public function keysOf(mixed $input): mixed
     {
         if (! is_array($input)) {
-            return [];
+            return null;
         }
 
         if (array_is_list($input)) {
@@ -248,12 +245,12 @@ class BuiltinSupport
 
             $result = array_keys($keys);
 
-            return count($result) === 1 ? $result[0] : $result;
+            return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
         }
 
         $result = array_keys($input);
 
-        return count($result) === 1 ? $result[0] : $result;
+        return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
     }
 
     /**

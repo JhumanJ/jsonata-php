@@ -78,8 +78,46 @@ class TokenStream
             return $this->tokens[$this->cursor - 1];
         }
 
+        $found = (string) ($token['value'] ?? $token['type']);
+
+        if (($token['type'] ?? null) === 'operator' && ($token['value'] ?? null) === '!') {
+            throw new EvaluationException(
+                'Error S0204: Unknown operator: "!"',
+                'S0204',
+                (int) $token['position'],
+                ['token' => '!', 'position' => (int) $token['position']]
+            );
+        }
+
+        if ($type === 'eof') {
+            throw new EvaluationException(
+                sprintf('Error S0201: Syntax error: "%s"', $found),
+                'S0201',
+                (int) $token['position'],
+                ['token' => $found, 'position' => (int) $token['position']]
+            );
+        }
+
+        if (in_array($type, [')', ']', '}'], true)) {
+            if ($token['type'] === 'eof') {
+                throw new EvaluationException(
+                    sprintf('Error S0203: Expected "%s" before end of expression', $type),
+                    'S0203',
+                    (int) $token['position'],
+                    ['token' => '(end)', 'position' => (int) $token['position']]
+                );
+            }
+
+            throw new EvaluationException(
+                sprintf('Error S0202: Expected "%s", got "%s"', $type, $found),
+                'S0202',
+                (int) $token['position'],
+                ['token' => $found, 'position' => (int) $token['position']]
+            );
+        }
+
         throw $this->syntaxError(
-            sprintf('Expected %s, found [%s].', $type, (string) ($token['value'] ?? $token['type'])),
+            sprintf('Expected %s, found [%s].', $type, $found),
             (int) $token['position']
         );
     }

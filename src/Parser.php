@@ -2,6 +2,8 @@
 
 namespace JsonataPhp;
 
+use JsonataPhp\Builtins\Signature;
+
 class Parser
 {
     /**
@@ -13,6 +15,7 @@ class Parser
         $stream = new TokenStream($tokens);
         $ast = $this->parseExpression($stream);
         $stream->expect('eof');
+        $this->assertPathStepsAreValid($ast);
 
         return $ast;
     }
@@ -33,6 +36,21 @@ class Parser
         $expressions = [$this->parseConditional($stream)];
 
         while ($stream->match(';')) {
+            if ($stream->check('eof')) {
+                $token = $stream->peek(-1);
+
+                throw new EvaluationException(
+                    'Error S0201: Syntax error: ";"',
+                    'S0201',
+                    (int) $token['position'],
+                    ['token' => ';', 'position' => (int) $token['position']]
+                );
+            }
+
+            if ($stream->check(')') || $stream->check('}') || $stream->check(']')) {
+                break;
+            }
+
             $expressions[] = $this->parseConditional($stream);
         }
 
@@ -90,7 +108,7 @@ class Parser
      */
     private function parseFallback(TokenStream $stream): array
     {
-        $expression = $this->parseChain($stream);
+        $expression = $this->parseOr($stream);
 
         while (true) {
             if ($stream->match('operator', '??')) {
@@ -105,7 +123,7 @@ class Parser
                 'type' => 'binary',
                 'operator' => $operator,
                 'left' => $expression,
-                'right' => $this->parseChain($stream),
+                'right' => $this->parseOr($stream),
             ];
         }
 
@@ -155,14 +173,14 @@ class Parser
      */
     private function parseConcatenation(TokenStream $stream): array
     {
-        $expression = $this->parseOr($stream);
+        $expression = $this->parseComparison($stream);
 
         while ($stream->match('operator', '&')) {
             $expression = [
                 'type' => 'binary',
                 'operator' => '&',
                 'left' => $expression,
-                'right' => $this->parseOr($stream),
+                'right' => $this->parseComparison($stream),
             ];
         }
 
@@ -176,7 +194,7 @@ class Parser
     {
         $expression = $this->parseAnd($stream);
 
-        while ($stream->match('operator', 'or')) {
+        while ($this->matchWordOperator($stream, 'or')) {
             $expression = [
                 'type' => 'binary',
                 'operator' => 'or',
@@ -195,7 +213,7 @@ class Parser
     {
         $expression = $this->parseEquality($stream);
 
-        while ($stream->match('operator', 'and')) {
+        while ($this->matchWordOperator($stream, 'and')) {
             $expression = [
                 'type' => 'binary',
                 'operator' => 'and',
@@ -212,7 +230,7 @@ class Parser
      */
     private function parseEquality(TokenStream $stream): array
     {
-        $expression = $this->parseComparison($stream);
+        $expression = $this->parseChain($stream);
 
         while (true) {
             if ($stream->match('operator', '=')) {
@@ -227,7 +245,7 @@ class Parser
                 'type' => 'binary',
                 'operator' => $operator,
                 'left' => $expression,
-                'right' => $this->parseComparison($stream),
+                'right' => $this->parseChain($stream),
             ];
         }
 
@@ -245,7 +263,7 @@ class Parser
             $operator = null;
 
             foreach (['<', '<=', '>', '>=', 'in'] as $candidate) {
-                if ($stream->match('operator', $candidate)) {
+                if ($candidate === 'in' ? $this->matchWordOperator($stream, $candidate) : $stream->match('operator', $candidate)) {
                     $operator = $candidate;
                     break;
                 }
@@ -350,6 +368,7 @@ class Parser
             return [
                 'type' => 'unary',
                 'operator' => '-',
+                'position' => (int) $stream->peek(-1)['position'],
                 'argument' => $this->parseUnary($stream),
             ];
         }
@@ -358,6 +377,7 @@ class Parser
             return [
                 'type' => 'unary',
                 'operator' => '+',
+                'position' => (int) $stream->peek(-1)['position'],
                 'argument' => $this->parseUnary($stream),
             ];
         }
@@ -373,8 +393,10 @@ class Parser
         $expression = $this->parsePrimary($stream);
 
         while (true) {
-            if ($stream->match('operator', '@')) {
-                $binding = $stream->expect('variable');
+            if ($stream->check('operator', '@', true)) {
+                $operator = $stream->advance();
+                $this->assertBindingCanFollow($expression, (int) $operator['position']);
+                $binding = $this->expectBindingVariable($stream, '@', (int) $operator['position']);
                 $expression = [
                     'type' => 'bind',
                     'kind' => 'focus',
@@ -385,8 +407,9 @@ class Parser
                 continue;
             }
 
-            if ($stream->match('operator', '#')) {
-                $binding = $stream->expect('variable');
+            if ($stream->check('operator', '#', true)) {
+                $operator = $stream->advance();
+                $binding = $this->expectBindingVariable($stream, '#', (int) $operator['position']);
                 $expression = [
                     'type' => 'bind',
                     'kind' => 'index',
@@ -427,6 +450,17 @@ class Parser
                 } elseif (
                     $stream->check('(')
                     || $stream->check('[')
+                    || $stream->check('number')
+                    || $stream->check('boolean')
+                    || $stream->check('null')
+                    || (
+                        $stream->check('variable')
+                        && ! (
+                            ($stream->peek()['value'] ?? null) === '$'
+                            && ($stream->peek(1)['type'] ?? null) === '['
+                            && ($stream->peek(2)['type'] ?? null) === '['
+                        )
+                    )
                     || $stream->check('keyword', 'function')
                 ) {
                     $expression = [
@@ -434,8 +468,15 @@ class Parser
                         'target' => $expression,
                         'step' => $this->parsePostfix($stream),
                     ];
+                } elseif ($stream->check('variable')) {
+                    $property = $stream->expect('variable');
+                    $expression = [
+                        'type' => 'property',
+                        'target' => $expression,
+                        'name' => $property['value'],
+                    ];
                 } else {
-                    $property = $stream->expectAny(['identifier', 'variable', 'string']);
+                    $property = $stream->expectAny(['identifier', 'string']);
                     $expression = [
                         'type' => 'property',
                         'target' => $expression,
@@ -447,6 +488,24 @@ class Parser
             }
 
             if ($stream->match('[')) {
+                if (($expression['type'] ?? null) === 'group') {
+                    throw new EvaluationException(
+                        'Error S0209: A predicate cannot follow a grouping expression in a step',
+                        'S0209',
+                        (int) $stream->peek()['position'],
+                        ['position' => (int) $stream->peek()['position']]
+                    );
+                }
+
+                if ($stream->match(']')) {
+                    $expression = [
+                        'type' => 'array_constructor',
+                        'target' => $expression,
+                    ];
+
+                    continue;
+                }
+
                 $indexOrPredicate = $this->parseExpression($stream);
                 $stream->expect(']');
                 $expression = $this->isSubscriptExpression($indexOrPredicate)
@@ -557,6 +616,45 @@ class Parser
     }
 
     /**
+     * @param  array{type: string, value: mixed, position: int}  $token
+     * @return array{value: mixed, position: int}
+     */
+    private function literalFromToken(array $token): array
+    {
+        return [
+            'value' => $token['value'],
+            'position' => $token['position'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function assertPathStepsAreValid(array $ast): void
+    {
+        if (($ast['type'] ?? null) === 'path_step' && ($ast['step']['type'] ?? null) === 'literal') {
+            throw new EvaluationException(
+                sprintf('Error S0213: The literal value %s cannot be used as a step within a path expression', (string) $ast['step']['value']),
+                'S0213',
+                (int) ($ast['step']['position'] ?? 0),
+                ['value' => $ast['step']['value'], 'position' => (int) ($ast['step']['position'] ?? 0)]
+            );
+        }
+
+        foreach ($ast as $value) {
+            if (is_array($value) && ! array_is_list($value)) {
+                $this->assertPathStepsAreValid($value);
+            } elseif (is_array($value)) {
+                foreach ($value as $item) {
+                    if (is_array($item)) {
+                        $this->assertPathStepsAreValid($item);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function parsePrimary(TokenStream $stream): array
@@ -577,7 +675,7 @@ class Parser
                 ],
             'number', 'boolean', 'null', 'regex' => [
                 'type' => 'literal',
-                'value' => $stream->advance()['value'],
+                ...$this->literalFromToken($stream->advance()),
             ],
             'identifier' => [
                 'type' => 'identifier',
@@ -587,14 +685,19 @@ class Parser
                 'type' => 'variable',
                 'name' => $stream->advance()['value'],
             ],
-            'keyword' => $token['value'] === 'function'
+            'keyword' => $token['value'] === 'function' && ($stream->peek(1)['type'] ?? null) !== '('
+                ? [
+                    'type' => 'identifier',
+                    'name' => $stream->advance()['value'],
+                ]
+                : ($token['value'] === 'function'
                 ? $this->parseFunctionDefinition($stream)
                 : throw new EvaluationException(
                     sprintf('Error S0203: Unexpected keyword [%s].', $token['value']),
                     'S0203',
                     (int) $token['position'],
                     ['position' => (int) $token['position']]
-                ),
+                )),
             '[' => $this->parseArrayLiteral($stream),
             '{' => $this->parseObjectLiteral($stream),
             '(' => $this->parseGroupedExpression($stream),
@@ -607,13 +710,37 @@ class Parser
                     'position' => $stream->advance()['position'],
                 ],
                 '|' => $this->parseTransformExpression($stream),
-                default => throw new EvaluationException(
-                    sprintf('Error S0203: Unexpected operator [%s].', (string) $token['value']),
-                    'S0203',
+                '!' => throw new EvaluationException(
+                    'Error S0204: Unknown operator: "!"',
+                    'S0204',
                     (int) $token['position'],
-                    ['position' => (int) $token['position']]
+                    ['token' => '!', 'position' => (int) $token['position']]
+                ),
+                default => throw new EvaluationException(
+                    sprintf('Error S0211: The symbol "%s" cannot be used as a unary operator', (string) $token['value']),
+                    'S0211',
+                    (int) $token['position'],
+                    ['token' => (string) $token['value'], 'position' => (int) $token['position']]
                 ),
             },
+            ')' => throw new EvaluationException(
+                'Error S0211: The symbol ")" cannot be used as a unary operator',
+                'S0211',
+                (int) $token['position'],
+                ['token' => ')', 'position' => (int) $token['position']]
+            ),
+            'eof' => throw new EvaluationException(
+                'Error S0207: Unexpected end of expression',
+                'S0207',
+                (int) $token['position'],
+                ['token' => '(end)', 'position' => (int) $token['position']]
+            ),
+            ':' => throw new EvaluationException(
+                'Error S0211: The symbol ":" cannot be used as a unary operator',
+                'S0211',
+                (int) $token['position'],
+                ['token' => ':', 'position' => (int) $token['position']]
+            ),
             default => throw new EvaluationException(
                 sprintf('Error S0203: Unexpected token [%s].', (string) ($token['value'] ?? $token['type'])),
                 'S0203',
@@ -712,13 +839,28 @@ class Parser
 
         if (! $stream->check(')')) {
             do {
-                $parameter = $stream->expect('variable');
+                if (! $stream->check('variable')) {
+                    $token = $stream->peek();
+
+                    throw new EvaluationException(
+                        'Error S0208: Parameter 1 of function definition must be a variable name (start with $)',
+                        'S0208',
+                        (int) $token['position'],
+                        ['token' => (string) ($token['value'] ?? $token['type']), 'position' => (int) $token['position']]
+                    );
+                }
+
+                $parameter = $stream->advance();
                 $parameters[] = (string) $parameter['value'];
             } while ($stream->match(','));
         }
 
         $stream->expect(')');
         $signature = $stream->check('operator', '<', true) ? $this->parseFunctionSignature($stream) : null;
+        if ($signature !== null) {
+            Signature::parse($signature);
+        }
+
         $stream->expect('{');
         $body = $this->parseExpression($stream);
         $stream->expect('}');
@@ -782,6 +924,17 @@ class Parser
      */
     private function parseGroupExpression(TokenStream $stream, array $target): array
     {
+        if (($target['type'] ?? null) === 'group') {
+            $token = $stream->peek();
+
+            throw new EvaluationException(
+                'Error S0210: Each step can only have one grouping expression',
+                'S0210',
+                (int) $token['position'],
+                ['position' => (int) $token['position']]
+            );
+        }
+
         $stream->expect('{');
         $pairs = [];
 
@@ -811,10 +964,8 @@ class Parser
     private function isSubscriptExpression(array $expression): bool
     {
         return match ($expression['type'] ?? null) {
-            'literal' => is_int($expression['value']) || is_float($expression['value']) || is_string($expression['value']),
-            'unary' => ($expression['operator'] ?? null) === '-'
-                && ($expression['argument']['type'] ?? null) === 'literal'
-                && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),
+            'literal' => is_int($expression['value']) || is_float($expression['value']),
+            'unary' => ($expression['operator'] ?? null) === '-',
             'array' => $expression['items'] !== [] && $this->allSelectorItems($expression['items']),
             'binary' => in_array($expression['operator'] ?? null, ['+', '-', '*', '/', '%'], true),
             default => false,
@@ -828,9 +979,7 @@ class Parser
     {
         return match ($expression['type'] ?? null) {
             'literal' => is_int($expression['value']) || is_float($expression['value']) || is_bool($expression['value']),
-            'unary' => ($expression['operator'] ?? null) === '-'
-                && ($expression['argument']['type'] ?? null) === 'literal'
-                && (is_int($expression['argument']['value'] ?? null) || is_float($expression['argument']['value'] ?? null)),
+            'unary' => ($expression['operator'] ?? null) === '-',
             'binary' => ($expression['operator'] ?? null) === '..',
             default => false,
         };
@@ -848,5 +997,57 @@ class Parser
         }
 
         return true;
+    }
+
+    private function matchWordOperator(TokenStream $stream, string $operator): bool
+    {
+        return $stream->match('operator', $operator) || $stream->match('identifier', $operator);
+    }
+
+    /**
+     * @param  array<string, mixed>  $expression
+     */
+    private function assertBindingCanFollow(array $expression, int $position): void
+    {
+        if (in_array($expression['type'] ?? null, ['filter', 'subscript'], true)
+            && $this->isPathStepExpression($expression['target'] ?? null)) {
+            throw new EvaluationException(
+                'Error S0215: A context variable binding must precede any predicates on a step',
+                'S0215',
+                $position,
+                ['position' => $position]
+            );
+        }
+
+        if (($expression['type'] ?? null) === 'sort' && $this->isPathStepExpression($expression['target'] ?? null)) {
+            throw new EvaluationException(
+                "Error S0216: A context variable binding must precede the 'order-by' clause on a step",
+                'S0216',
+                $position,
+                ['position' => $position]
+            );
+        }
+    }
+
+    /**
+     * @return array{type: string, value: mixed, position: int}
+     */
+    private function expectBindingVariable(TokenStream $stream, string $operator, int $position): array
+    {
+        if ($stream->check('variable')) {
+            return $stream->advance();
+        }
+
+        throw new EvaluationException(
+            sprintf('Error S0214: The right side of "%s" must be a variable name (start with $)', $operator),
+            'S0214',
+            $position,
+            ['token' => $operator, 'position' => $position]
+        );
+    }
+
+    private function isPathStepExpression(mixed $expression): bool
+    {
+        return is_array($expression) && ! in_array($expression['type'] ?? null, ['variable', 'literal', 'array', 'object', 'grouping'], true);
     }
 }

@@ -265,7 +265,7 @@ JSONATA;
 
     it('throws a jsonata-style syntax error for invalid expressions', function () {
         expect(fn () => $this->service->evaluate('{', $this->context))
-            ->toThrow(EvaluationException::class, 'Error S0203');
+            ->toThrow(EvaluationException::class, 'Error S0207');
     });
 
     it('supports arithmetic comparisons and array literals', function () {

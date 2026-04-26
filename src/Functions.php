@@ -12,6 +12,7 @@ use JsonataPhp\Builtins\RegistersMetaBuiltins;
 use JsonataPhp\Builtins\RegistersNumericBuiltins;
 use JsonataPhp\Builtins\RegistersObjectBuiltins;
 use JsonataPhp\Builtins\RegistersStringBuiltins;
+use JsonataPhp\Formatters\DateTimeFormatter;
 use JsonataPhp\Formatters\IntegerFormatter;
 use JsonataPhp\Formatters\NumberFormatter;
 use ReflectionFunction;
@@ -36,10 +37,9 @@ class Functions
     ) {}
 
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<string, Closure>
      */
-    public function defaultEnvironment(Evaluator $evaluator, array $rootContext): array
+    public function defaultEnvironment(Evaluator $evaluator, mixed $rootContext): array
     {
         $this->support = new BuiltinSupport;
 
@@ -124,7 +124,7 @@ class Functions
     protected function keysOf(mixed $input): mixed
     {
         if (! is_array($input)) {
-            return [];
+            return null;
         }
 
         if (array_is_list($input)) {
@@ -142,12 +142,12 @@ class Functions
 
             $result = array_keys($keys);
 
-            return count($result) === 1 ? $result[0] : $result;
+            return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
         }
 
         $result = array_keys($input);
 
-        return count($result) === 1 ? $result[0] : $result;
+        return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
     }
 
     /**
@@ -231,13 +231,45 @@ class Functions
             return $value ? 1 : 0;
         }
 
-        if (is_string($value) && is_numeric($value)) {
-            return str_contains($value, '.') ? (float) $value : (int) $value;
+        if (is_string($value)) {
+            if (preg_match('/^0[xX][0-9a-fA-F]+$/', $value) === 1) {
+                return intval(substr($value, 2), 16);
+            }
+
+            if (preg_match('/^0[bB][01]+$/', $value) === 1) {
+                return intval(substr($value, 2), 2);
+            }
+
+            if (preg_match('/^0[oO][0-7]+$/', $value) === 1) {
+                return intval(substr($value, 2), 8);
+            }
+
+            if (preg_match('/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/', $value) !== 1) {
+                throw new EvaluationException(
+                    sprintf('Error D3030: Unable to cast value to a number: "%s"', $value),
+                    'D3030'
+                );
+            }
+
+            $number = str_contains($value, '.') || stripos($value, 'e') !== false
+                ? (float) $value
+                : (int) $value;
+
+            if (is_float($number) && (is_infinite($number) || is_nan($number))) {
+                throw new EvaluationException(
+                    sprintf('Error D3030: Unable to cast value to a number: "%s"', $value),
+                    'D3030'
+                );
+            }
+
+            return $number;
         }
 
+        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
         throw new EvaluationException(
-            'Error T0412: Expected a numeric value.',
-            'T0412'
+            sprintf('Error D3030: Unable to cast value to a number: "%s"', $encoded === false ? '' : $encoded),
+            'D3030'
         );
     }
 
@@ -251,21 +283,18 @@ class Functions
         return $regex->toPcre();
     }
 
-    protected function toMillis(string $value): int
+    protected function toMillis(string $value, ?string $picture = null): ?int
     {
-        try {
-            $date = new \DateTimeImmutable($value, new \DateTimeZone('UTC'));
-        } catch (\Exception) {
-            throw new EvaluationException(
-                'Error D3110: The timestamp could not be parsed.',
-                'D3110'
-            );
+        $formatter = new DateTimeFormatter($this->integerFormatter);
+
+        if ($picture !== null && $picture !== '') {
+            return $formatter->parseMillis($value, $picture);
         }
 
-        return ((int) $date->format('U')) * 1000 + (int) $date->format('v');
+        return $formatter->parseIsoMillis($value);
     }
 
-    protected function fromMillis(int $millis, ?string $picture = null, ?string $timezone = null): string
+    protected function fromMillis(int $millis, ?string $picture = null, ?string $timezone = null): ?string
     {
         $seconds = intdiv($millis, 1000);
         $milliseconds = $millis % 1000;
@@ -287,19 +316,14 @@ class Functions
         $date = $date->setTimezone(new \DateTimeZone($timezone));
 
         if ($picture === null || $picture === '') {
+            if (! in_array($timezone, ['UTC', '+00:00'], true)) {
+                return $date->format('Y-m-d\TH:i:s.vP');
+            }
+
             return $date->format('Y-m-d\TH:i:s.v\Z');
         }
 
-        return strtr($picture, [
-            '[Y0001]' => $date->format('Y'),
-            '[M01]' => $date->format('m'),
-            '[D01]' => $date->format('d'),
-            '[H01]' => $date->format('H'),
-            '[h01]' => $date->format('h'),
-            '[m01]' => $date->format('i'),
-            '[s01]' => $date->format('s'),
-            '[f001]' => $date->format('v'),
-        ]);
+        return (new DateTimeFormatter($this->integerFormatter))->format($date, $picture, $timezone);
     }
 
     protected function formatNumber(int|float $value, string $picture): string
@@ -423,6 +447,10 @@ class Functions
 
     protected function normalizeTimezone(string $timezone): string
     {
+        if ($timezone === '0000') {
+            return '+00:00';
+        }
+
         if (preg_match('/^[+-]\d{4}$/', $timezone) === 1) {
             return substr($timezone, 0, 3).':'.substr($timezone, 3, 2);
         }
@@ -434,9 +462,8 @@ class Functions
     {
         $tokens = $this->lexer->tokenize($expression);
         $ast = $this->parser->parse($tokens);
-        $rootContext = is_array($focus) ? $focus : ['value' => $focus];
 
-        return $evaluator->evaluateWithContext($ast, $focus, $rootContext);
+        return $evaluator->evaluateWithContext($ast, $focus, $focus);
     }
 
     protected function jsonTypeSymbol(mixed $value, Evaluator $evaluator): string

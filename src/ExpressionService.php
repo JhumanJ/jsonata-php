@@ -36,8 +36,7 @@ class ExpressionService
     {
         $tokens = $this->lexer->tokenize($expression);
         $ast = $this->parser->parse($tokens);
-        $rootContext = is_array($context) ? $context : ['value' => $context];
 
-        return $this->evaluator->evaluateWithContext($ast, $context, $rootContext, $bindings);
+        return $this->evaluator->evaluateWithContext($ast, $context, $context, $bindings);
     }
 }

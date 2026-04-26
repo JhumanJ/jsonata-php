@@ -25,8 +25,15 @@ class BuiltinDefinition
         );
         $context = $evaluator->normalizePreservingMissingPublic($context);
         $validatedArguments = $this->parsedSignature?->validate($arguments, $context, $evaluator) ?? $arguments;
+
+        if ($this->returnsMissingWhenAnyArgumentIsMissing($validatedArguments, $evaluator)) {
+            return $evaluator->missingValuePublic();
+        }
+
         $validatedArguments = array_map(
-            fn (mixed $argument): mixed => $evaluator->normalizeValuePublic($argument),
+            fn (mixed $argument): mixed => $this->preservesMissingArguments()
+                ? $evaluator->normalizePreservingMissingPublic($argument)
+                : $evaluator->normalizeValuePublic($argument),
             $validatedArguments
         );
         $context = $evaluator->normalizeValuePublic($context);
@@ -37,5 +44,28 @@ class BuiltinDefinition
     public function arity(): ?int
     {
         return $this->parsedSignature?->parameterCount();
+    }
+
+    /**
+     * @param  array<int, mixed>  $arguments
+     */
+    private function returnsMissingWhenAnyArgumentIsMissing(array $arguments, Evaluator $evaluator): bool
+    {
+        if ($this->preservesMissingArguments()) {
+            return false;
+        }
+
+        foreach ($arguments as $argument) {
+            if ($evaluator->isMissing($argument)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function preservesMissingArguments(): bool
+    {
+        return in_array($this->name, ['append', 'boolean', 'count', 'error', 'exists', 'fromMillis', 'join', 'type', 'zip'], true);
     }
 }

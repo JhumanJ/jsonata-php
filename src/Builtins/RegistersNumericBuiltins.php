@@ -8,10 +8,9 @@ use JsonataPhp\Evaluator;
 trait RegistersNumericBuiltins
 {
     /**
-     * @param  array<string, mixed>  $rootContext
      * @return array<int, BuiltinDefinition>
      */
-    protected function numericBuiltinDefinitions(Evaluator $evaluator, array $rootContext): array
+    protected function numericBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
         return [
             $this->builtin('sum', function (array $arguments) use ($evaluator): int|float {
@@ -63,15 +62,20 @@ trait RegistersNumericBuiltins
                 return $result;
             }, '<n-n:n>'),
             $this->builtin('random', fn (): float => lcg_value(), '<:n>'),
-            $this->builtin('formatNumber', function (array $arguments): string {
-                $value = $this->toNumber($arguments[0] ?? null);
-                $picture = (string) ($arguments[1] ?? '');
+            $this->builtin('formatNumber', function (array $arguments): ?string {
+                if (! array_key_exists(0, $arguments) || $arguments[0] === null) {
+                    return null;
+                }
 
-                return $this->numberFormatter->format($value, $picture);
+                $value = $this->toNumber($arguments[0]);
+                $picture = (string) ($arguments[1] ?? '');
+                $options = is_array($arguments[2] ?? null) ? $arguments[2] : [];
+
+                return $this->numberFormatter->format($value, $picture, $options);
             }, '<n-so?:s>'),
             $this->builtin('formatBase', function (array $arguments): string {
-                $value = (int) $this->toNumber($arguments[0] ?? null);
-                $radix = array_key_exists(1, $arguments) ? (int) $this->toNumber($arguments[1]) : 10;
+                $value = (int) round($this->toNumber($arguments[0] ?? null));
+                $radix = array_key_exists(1, $arguments) ? (int) floor($this->toNumber($arguments[1])) : 10;
 
                 if ($radix < 2 || $radix > 36) {
                     throw new EvaluationException(
@@ -80,7 +84,9 @@ trait RegistersNumericBuiltins
                     );
                 }
 
-                return strtolower(base_convert((string) $value, 10, $radix));
+                $sign = $value < 0 ? '-' : '';
+
+                return $sign.strtolower(base_convert((string) abs($value), 10, $radix));
             }, '<n-n?:s>'),
         ];
     }
