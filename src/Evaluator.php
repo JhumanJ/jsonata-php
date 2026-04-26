@@ -8,7 +8,15 @@ use stdClass;
 
 class Evaluator
 {
+    private const MAX_USER_CALL_DEPTH = 100;
+
+    private const MAX_TAIL_CALLS = 10000;
+
     private object $missingValue;
+
+    private int $userCallDepth = 0;
+
+    private int $tailCallCount = 0;
 
     public function __construct(
         private readonly Functions $functions,
@@ -31,13 +39,24 @@ class Evaluator
      */
     public function evaluateWithContext(array $ast, mixed $context, mixed $rootContext, array $bindings = []): mixed
     {
+        $previousUserCallDepth = $this->userCallDepth;
+        $previousTailCallCount = $this->tailCallCount;
+        $this->userCallDepth = 0;
+        $this->tailCallCount = 0;
+
         $environment = [
             ...$this->functions->defaultEnvironment($this, $rootContext),
             ...$this->normalizeBindings($bindings),
         ];
-        $result = $this->evaluateAst($ast, $context, $environment, $rootContext);
 
-        return $this->isMissing($result) ? null : $this->unwrapTuples($result);
+        try {
+            $result = $this->evaluateAst($ast, $context, $environment, $rootContext);
+
+            return $this->isMissing($result) ? null : $this->unwrapTuples($result);
+        } finally {
+            $this->userCallDepth = $previousUserCallDepth;
+            $this->tailCallCount = $previousTailCallCount;
+        }
     }
 
     /**
@@ -168,6 +187,21 @@ class Evaluator
         };
     }
 
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateTailAst(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    {
+        return match ($ast['type']) {
+            'call' => $this->evaluateCall($ast, $context, $environment, $rootContext, true),
+            'conditional' => $this->evaluateTailConditional($ast, $context, $environment, $rootContext),
+            'grouping' => $this->evaluateTailGrouping($ast, $context, $environment, $rootContext),
+            'sequence' => $this->evaluateTailSequence($ast, $context, $environment, $rootContext),
+            default => $this->evaluateAst($ast, $context, $environment, $rootContext),
+        };
+    }
+
     private function normalizeLiteral(mixed $value): mixed
     {
         if (
@@ -200,11 +234,41 @@ class Evaluator
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
      */
+    private function evaluateTailSequence(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    {
+        $expressions = $ast['expressions'];
+        $lastIndex = array_key_last($expressions);
+        $result = $this->missingValue;
+
+        foreach ($expressions as $index => $expression) {
+            $result = $index === $lastIndex
+                ? $this->evaluateTailAst($expression, $context, $environment, $rootContext)
+                : $this->evaluateAst($expression, $context, $environment, $rootContext);
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
     private function evaluateGrouping(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $localEnvironment = $environment;
 
         return $this->evaluateAst($ast['expression'], $context, $localEnvironment, $rootContext);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateTailGrouping(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    {
+        $localEnvironment = $environment;
+
+        return $this->evaluateTailAst($ast['expression'], $context, $localEnvironment, $rootContext);
     }
 
     /**
@@ -262,6 +326,25 @@ class Evaluator
         }
 
         return $this->evaluateAst($ast['alternate'], $context, $environment, $rootContext);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateTailConditional(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    {
+        $test = $this->evaluateAst($ast['test'], $context, $environment, $rootContext);
+
+        if ($this->isTruthy($test)) {
+            return $this->evaluateTailAst($ast['consequent'], $context, $environment, $rootContext);
+        }
+
+        if (($ast['alternate'] ?? null) === null) {
+            return $this->missingValue;
+        }
+
+        return $this->evaluateTailAst($ast['alternate'], $context, $environment, $rootContext);
     }
 
     /**
@@ -1578,23 +1661,53 @@ class Evaluator
      */
     private function createClosure(array $ast, mixed $definitionContext, array &$environment, mixed $rootContext): Closure
     {
-        $closure = function (array $arguments, mixed $callContext = null) use ($ast, $definitionContext, &$environment, $rootContext): mixed {
+        $closure = function (array $arguments, mixed $callContext = null, bool $tailPosition = false) use ($ast, $definitionContext, &$environment, $rootContext): mixed {
+            if ($tailPosition) {
+                $this->tailCallCount++;
+
+                if ($this->tailCallCount > self::MAX_TAIL_CALLS) {
+                    throw new EvaluationException(
+                        'Error U1001: Stack overflow error.',
+                        'U1001',
+                        (int) ($ast['position'] ?? 0)
+                    );
+                }
+            } else {
+                $this->userCallDepth++;
+
+                if ($this->userCallDepth > self::MAX_USER_CALL_DEPTH) {
+                    $this->userCallDepth--;
+
+                    throw new EvaluationException(
+                        'Error U1001: Stack overflow error.',
+                        'U1001',
+                        (int) ($ast['position'] ?? 0)
+                    );
+                }
+            }
+
             $localEnvironment = $environment;
             $effectiveContext = $ast['parameters'] === []
                 ? $definitionContext
                 : ($callContext ?? $definitionContext);
 
-            if (($ast['signature'] ?? null) !== null) {
-                $arguments = Signature::parse($ast['signature'])->validate($arguments, $effectiveContext, $this);
-            }
+            try {
+                if (($ast['signature'] ?? null) !== null) {
+                    $arguments = Signature::parse($ast['signature'])->validate($arguments, $effectiveContext, $this);
+                }
 
-            foreach ($ast['parameters'] as $index => $parameter) {
-                if (array_key_exists($index, $arguments)) {
-                    $localEnvironment[$parameter] = $arguments[$index];
+                foreach ($ast['parameters'] as $index => $parameter) {
+                    if (array_key_exists($index, $arguments)) {
+                        $localEnvironment[$parameter] = $arguments[$index];
+                    }
+                }
+
+                return $this->evaluateTailAst($ast['body'], $effectiveContext, $localEnvironment, $rootContext);
+            } finally {
+                if (! $tailPosition) {
+                    $this->userCallDepth--;
                 }
             }
-
-            return $this->evaluateAst($ast['body'], $effectiveContext, $localEnvironment, $rootContext);
         };
 
         return $this->functions->registerFunctionArity($closure, count($ast['parameters']));
@@ -1695,7 +1808,7 @@ class Evaluator
      * @param  array<string, mixed>  $ast
      * @param  array<string, mixed>  $environment
      */
-    private function evaluateCall(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    private function evaluateCall(array $ast, mixed $context, array &$environment, mixed $rootContext, bool $tailPosition = false): mixed
     {
         try {
             $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
@@ -1719,7 +1832,7 @@ class Evaluator
             );
         }
 
-        return $callee($arguments, $context);
+        return $callee($arguments, $context, $tailPosition);
     }
 
     /**

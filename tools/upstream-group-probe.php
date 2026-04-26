@@ -48,10 +48,18 @@ function probeCase(ExpressionService $service, array $case): array
     $input = probeInput($case);
     $bindings = $case['bindings'] ?? [];
 
-    try {
-        $js = jsonata_test_evaluate_with_local_js($case['expr'], $input, $bindings);
-    } catch (Throwable $exception) {
-        return [false, 'js probe failed: '.$exception->getMessage()];
+    if (($case['_group'] ?? null) === 'tail-recursion') {
+        $js = jsonata_test_expected_upstream_outcome($case);
+
+        if ($js === null) {
+            return [false, 'fixture has no expected upstream outcome'];
+        }
+    } else {
+        try {
+            $js = jsonata_test_evaluate_with_local_js($case['expr'], $input, $bindings);
+        } catch (Throwable $exception) {
+            return [false, 'js probe failed: '.$exception->getMessage()];
+        }
     }
 
     try {

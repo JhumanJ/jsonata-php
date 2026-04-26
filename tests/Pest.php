@@ -260,6 +260,36 @@ function jsonata_test_upstream_cases(?array $groups = null, array $allowedCases 
 /**
  * @return array{ok: bool, result?: mixed, error?: array<string, mixed>}
  */
+function jsonata_test_expected_upstream_outcome(array $case): ?array
+{
+    if (array_key_exists('code', $case)) {
+        return [
+            'ok' => false,
+            'error' => ['code' => $case['code']],
+        ];
+    }
+
+    if (array_key_exists('result', $case)) {
+        return [
+            'ok' => true,
+            'result' => $case['result'],
+        ];
+    }
+
+    if (($case['undefinedResult'] ?? false) === true) {
+        return [
+            'ok' => true,
+            'result' => null,
+            'undefinedResult' => true,
+        ];
+    }
+
+    return null;
+}
+
+/**
+ * @return array{ok: bool, result?: mixed, error?: array<string, mixed>}
+ */
 function jsonata_test_evaluate_with_local_js(string $expression, mixed $context, array $bindings = [], ?string $jsonataPath = null): array
 {
     $script = <<<'JS'
@@ -319,6 +349,7 @@ JS;
         json_encode($context, JSON_THROW_ON_ERROR),
         json_encode($bindings, JSON_THROW_ON_ERROR),
     ], package_path('.'));
+    $process->setTimeout(10);
 
     $process->run();
 

@@ -390,6 +390,7 @@ function jsonata_upstream_enabled_case_ids(): array
         'simple-array-selectors',
         'sorting',
         'string-concat',
+        'tail-recursion',
         'token-conversion',
         'transform',
         'transforms',
@@ -450,11 +451,15 @@ function jsonata_upstream_assert_case(ExpressionService $service, array $case): 
     $input = jsonata_upstream_input($case);
     $bindings = $case['bindings'] ?? [];
 
-    $js = jsonata_test_evaluate_with_local_js(
-        $case['expr'],
-        $input,
-        $bindings
-    );
+    $js = ($case['_group'] ?? null) === 'tail-recursion'
+        ? jsonata_test_expected_upstream_outcome($case)
+        : jsonata_test_evaluate_with_local_js(
+            $case['expr'],
+            $input,
+            $bindings
+        );
+
+    expect($js)->not->toBeNull($case['_case_id'].' has no expected upstream outcome.');
 
     try {
         $php = [
