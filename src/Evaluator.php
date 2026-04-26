@@ -134,11 +134,7 @@ class Evaluator
             'conditional' => $this->evaluateConditional($ast, $context, $environment, $rootContext),
             'unary' => $this->evaluateUnary($ast, $context, $environment, $rootContext),
             'binary' => $this->evaluateBinary($ast, $context, $environment, $rootContext),
-            'property' => $this->accessProperty(
-                $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
-                (string) $ast['name'],
-                ($ast['target']['type'] ?? null) === 'variable'
-            ),
+            'property' => $this->evaluateProperty($ast, $context, $environment, $rootContext),
             'path_step' => $this->evaluatePathStep($ast, $context, $environment, $rootContext),
             'wildcard' => $this->evaluateWildcard(
                 $this->evaluateAst($ast['target'], $context, $environment, $rootContext)
@@ -151,11 +147,7 @@ class Evaluator
             'parent_context' => $this->evaluateParentContext($ast, $context),
             'parent' => $this->evaluateParent($ast, $context, $environment, $rootContext),
             'array_constructor' => $this->evaluateArrayConstructor($ast, $context, $environment, $rootContext),
-            'subscript' => $this->accessSubscript(
-                $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
-                $this->evaluateAst($ast['index'], $context, $environment, $rootContext),
-                ($ast['target']['type'] ?? null) !== 'grouping'
-            ),
+            'subscript' => $this->evaluateSubscript($ast, $context, $environment, $rootContext),
             'filter' => $this->filterSequence($ast, $context, $environment, $rootContext),
             'sort' => $this->evaluateSort($ast, $context, $environment, $rootContext),
             'object_map' => $this->evaluateObjectMap($ast, $context, $environment, $rootContext),
@@ -248,7 +240,7 @@ class Evaluator
 
         return match ($name) {
             '$' => $this->tupleValue($context),
-            '$$' => $rootContext,
+            '$$' => $this->wrapTupleResult($rootContext, $this->tupleBindings($context)),
             default => array_key_exists($name, $environment) ? $environment[$name] : $this->missingValue,
         };
     }
@@ -284,9 +276,20 @@ class Evaluator
             return $this->missingValue;
         }
 
+        $value = $this->normalizeValuePublic($value);
+
+        if (! is_int($value) && ! is_float($value)) {
+            throw new EvaluationException(
+                sprintf('Error D1002: Cannot negate a non-numeric value: "%s"', $this->stringify($value)),
+                'D1002',
+                (int) ($ast['position'] ?? 0),
+                ['token' => (string) $ast['operator'], 'position' => (int) ($ast['position'] ?? 0)]
+            );
+        }
+
         return match ($ast['operator']) {
-            '+' => $this->toNumber($value),
-            '-' => -$this->toNumber($value),
+            '+' => $value,
+            '-' => -$value,
             default => throw new EvaluationException(
                 sprintf('Unsupported JSONata unary operator [%s].', (string) $ast['operator'])
             ),
@@ -299,6 +302,10 @@ class Evaluator
      */
     private function evaluateBinary(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
+        if ($ast['operator'] === '~>' && $this->isRangeCountChain($ast)) {
+            return $this->evaluateRangeCountChain($ast['left']['items'][0], $context, $environment, $rootContext);
+        }
+
         $left = $this->evaluateAst($ast['left'], $context, $environment, $rootContext);
 
         if ($ast['operator'] === '~>') {
@@ -355,6 +362,21 @@ class Evaluator
                 continue;
             }
 
+            $normalizedValue = $this->tupleValue($value);
+
+            if (
+                is_array($normalizedValue)
+                && array_is_list($normalizedValue)
+                && ($item['type'] ?? null) !== 'array'
+                && ($item['type'] ?? null) !== 'object'
+            ) {
+                foreach ($normalizedValue as $nestedValue) {
+                    $items[] = $this->tupleValue($nestedValue);
+                }
+
+                continue;
+            }
+
             if (
                 is_array($value)
                 && array_is_list($value)
@@ -401,6 +423,10 @@ class Evaluator
             return [];
         }
 
+        if ($this->isTuple($value) && (! is_array($this->tupleValue($value)) || ! array_is_list($this->tupleValue($value)))) {
+            return [$value];
+        }
+
         $value = $this->tupleValue($value);
 
         return is_array($value) && array_is_list($value)
@@ -411,6 +437,27 @@ class Evaluator
     private function resolveIdentifier(string $name, mixed $context): mixed
     {
         return $this->accessProperty($context, $name, true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateProperty(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    {
+        $value = $this->accessProperty(
+            $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
+            (string) $ast['name'],
+            in_array($ast['target']['type'] ?? null, ['array_constructor', 'object', 'subscript', 'variable'], true)
+        );
+
+        if (! $this->isMissing($value)
+            && $this->hasArrayConstructorRoot($ast['target'])
+            && (! is_array($value) || ! array_is_list($value))) {
+            return [$value];
+        }
+
+        return $value;
     }
 
     private function accessProperty(mixed $target, string $name, bool $preserveDirectArray = false): mixed
@@ -476,6 +523,23 @@ class Evaluator
         }
 
         return $this->missingValue;
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateSubscript(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
+    {
+        $value = $this->accessSubscript(
+            $this->evaluateAst($ast['target'], $context, $environment, $rootContext),
+            $this->evaluateAst($ast['index'], $context, $environment, $rootContext),
+            ! in_array($ast['target']['type'] ?? null, ['grouping', 'identifier'], true)
+        );
+
+        return $this->hasArrayConstructorRoot($ast['target'])
+            ? $this->arrayConstructorFromValue($value)
+            : $value;
     }
 
     private function accessSubscript(mixed $target, mixed $index, bool $allowParentDistribution = true): mixed
@@ -817,9 +881,36 @@ class Evaluator
             $results[] = $value;
         }
 
+        if (($ast['step']['type'] ?? null) === 'group') {
+            return $this->mergePathStepGroups($results);
+        }
+
         return $this->hasArrayConstructorRoot($ast['target']) || ($ast['step']['type'] ?? null) === 'array_constructor'
             ? array_values($results)
             : $this->collapseSequence($results);
+    }
+
+    /**
+     * @param  array<int, mixed>  $groups
+     * @return array<string, mixed>
+     */
+    private function mergePathStepGroups(array $groups): array
+    {
+        $merged = [];
+
+        foreach ($groups as $group) {
+            $group = $this->tupleValue($group);
+
+            if (! is_array($group) || array_is_list($group)) {
+                continue;
+            }
+
+            foreach ($group as $key => $value) {
+                $merged[$key] = $value;
+            }
+        }
+
+        return $merged;
     }
 
     /**
@@ -899,10 +990,7 @@ class Evaluator
         $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
 
         if (! $callee instanceof Closure) {
-            throw new EvaluationException(
-                'Error T1006: Attempted to call a non-function value.',
-                'T1006'
-            );
+            $this->throwNonFunctionCall($ast, $environment);
         }
 
         $arguments = [];
@@ -926,14 +1014,22 @@ class Evaluator
     private function evaluateParent(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
         $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
+        $items = $this->toSequence($target);
         $parents = [];
 
-        foreach ($this->toSequence($target) as $item) {
+        foreach ($items as $item) {
             if (! $this->isTuple($item) || $this->tupleParent($item) === null) {
                 continue;
             }
 
             $parents[] = $this->tupleParent($item);
+        }
+
+        if ($parents === [] && $items !== []) {
+            throw new EvaluationException(
+                "Error S0217: The object representing the 'parent' cannot be derived from this expression",
+                'S0217'
+            );
         }
 
         return $this->collapseSequence($parents);
@@ -1130,7 +1226,9 @@ class Evaluator
      */
     private function filterSequence(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
-        $sequence = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
+        $sequence = ($ast['target']['type'] ?? null) === 'variable' && ($ast['target']['name'] ?? null) === '$' && $this->isTuple($context)
+            ? $context
+            : $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
         $items = $this->pathInputSequence($sequence);
 
         if ($items === []) {
@@ -1158,7 +1256,9 @@ class Evaluator
             }
         }
 
-        return $this->collapseSequence($matches);
+        return $this->hasArrayConstructorRoot($ast['target'])
+            ? array_values($matches)
+            : $this->collapseSequence($matches);
     }
 
     /**
@@ -1237,7 +1337,7 @@ class Evaluator
                 $this->assertObjectKeyResult($keyResult, $pair, $ast);
 
                 $keys = $this->toSequence($keyResult);
-                $deferValue = ($pair['value']['type'] ?? null) === 'call';
+                $deferValue = $this->isDeferredGroupValue($pair['value']);
                 $value = $this->missingValue;
 
                 if (! $deferValue) {
@@ -1294,6 +1394,18 @@ class Evaluator
                         continue;
                     }
 
+                    if (($pair['value']['type'] ?? null) === 'array_constructor' && is_array($value) && array_is_list($value)) {
+                        if (! is_array($grouped[$key]) || ! array_is_list($grouped[$key])) {
+                            $grouped[$key] = [$grouped[$key]];
+                        }
+
+                        foreach ($value as $nestedValue) {
+                            $grouped[$key][] = $nestedValue;
+                        }
+
+                        continue;
+                    }
+
                     if (! is_array($grouped[$key]) || ! array_is_list($grouped[$key])) {
                         $grouped[$key] = [$grouped[$key]];
                     }
@@ -1304,9 +1416,9 @@ class Evaluator
         }
 
         foreach ($deferredGroups as $key => $deferredGroup) {
-            $value = $this->evaluateAst(
+            $value = $this->evaluateDeferredGroupValue(
                 $deferredGroup['ast'],
-                $this->collapseSequence($deferredGroup['items']),
+                $deferredGroup['items'],
                 $environment,
                 $rootContext
             );
@@ -1317,6 +1429,115 @@ class Evaluator
         }
 
         return $grouped;
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function isDeferredGroupValue(array $ast): bool
+    {
+        return ($ast['type'] ?? null) === 'call'
+            || ($ast['type'] ?? null) === 'sort'
+            || (($ast['type'] ?? null) === 'binary' && ($ast['operator'] ?? null) === '~>');
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<int, mixed>  $items
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateDeferredGroupValue(array $ast, array $items, array &$environment, mixed $rootContext): mixed
+    {
+        $context = $this->collapseSequence($items);
+
+        if (($ast['type'] ?? null) === 'call') {
+            $callee = $this->evaluateAst($ast['callee'], $items[0] ?? $context, $environment, $rootContext);
+
+            if (! $callee instanceof Closure) {
+                throw new EvaluationException(
+                    'Error T1006: Attempted to call a non-function value.',
+                    'T1006'
+                );
+            }
+
+            $arguments = [];
+            foreach ($ast['arguments'] as $argument) {
+                $arguments[] = $this->normalizePreservingMissingPublic(
+                    $this->evaluateDeferredGroupArgument($argument, $items, $environment, $rootContext)
+                );
+            }
+
+            return $callee($arguments, $context);
+        }
+
+        if (($ast['type'] ?? null) === 'sort') {
+            return $this->evaluateDeferredGroupSort($ast, $items, $environment, $rootContext);
+        }
+
+        if (($ast['type'] ?? null) === 'binary' && ($ast['operator'] ?? null) === '~>') {
+            $input = $this->evaluateDeferredGroupArgument($ast['left'], $items, $environment, $rootContext);
+
+            return $this->evaluateChain($ast['right'], $input, $context, $environment, $rootContext);
+        }
+
+        return $this->evaluateAst($ast, $context, $environment, $rootContext);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<int, mixed>  $items
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateDeferredGroupArgument(array $ast, array $items, array &$environment, mixed $rootContext): mixed
+    {
+        if (($ast['type'] ?? null) === 'literal') {
+            return $this->evaluateAst($ast, $items[0] ?? $this->missingValue, $environment, $rootContext);
+        }
+
+        $values = [];
+
+        foreach ($items as $item) {
+            $value = $this->evaluateAst($ast, $item, $environment, $rootContext);
+
+            if ($this->isMissing($value)) {
+                continue;
+            }
+
+            foreach ($this->toSequence($value) as $nestedValue) {
+                $values[] = $nestedValue;
+            }
+        }
+
+        return $this->collapseSequence($values);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<int, mixed>  $items
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateDeferredGroupSort(array $ast, array $items, array &$environment, mixed $rootContext): mixed
+    {
+        $values = $this->pathInputSequence(
+            $this->evaluateDeferredGroupArgument($ast['target'], $items, $environment, $rootContext)
+        );
+        $sorted = $values;
+
+        usort($sorted, function (mixed $left, mixed $right) use ($ast, &$environment, $rootContext): int {
+            foreach ($ast['terms'] as $term) {
+                $leftValue = $this->evaluateAst($term['expression'], $left, $environment, $rootContext);
+                $rightValue = $this->evaluateAst($term['expression'], $right, $environment, $rootContext);
+                $comparison = $this->compareSortValues($leftValue, $rightValue);
+
+                if ($comparison !== 0) {
+                    return $term['descending'] ? -$comparison : $comparison;
+                }
+            }
+
+            return 0;
+        });
+
+        return $this->collapseSequence($sorted);
     }
 
     private function groupedValueContains(mixed $existing, mixed $value): bool
@@ -1418,7 +1639,13 @@ class Evaluator
                 $update = $this->evaluateAst($ast['update'], $match, $localEnvironment, $transformRootContext);
 
                 if (! $this->isMissing($update) && $update !== null) {
-                    if (! is_array($update) || array_is_list($update)) {
+                    $updateIsEmptyObjectLiteral = ($ast['update']['type'] ?? null) === 'object'
+                        && ($ast['update']['pairs'] ?? []) === []
+                        && $update instanceof stdClass
+                        && get_object_vars($update) === [];
+                    $updateProperties = $updateIsEmptyObjectLiteral ? [] : $update;
+
+                    if (! $updateIsEmptyObjectLiteral && (! is_array($updateProperties) || array_is_list($updateProperties))) {
                         throw new EvaluationException(
                             sprintf(
                                 'Error T2011: The insert/update clause of the transform expression must evaluate to an object: %s',
@@ -1437,7 +1664,7 @@ class Evaluator
                         );
                     }
 
-                    foreach ($update as $property => $value) {
+                    foreach ($updateProperties as $property => $value) {
                         $match[$property] = $value;
                     }
                 }
@@ -1470,13 +1697,18 @@ class Evaluator
      */
     private function evaluateCall(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
-        $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
+        try {
+            $callee = $this->evaluateAst($ast['callee'], $context, $environment, $rootContext);
+        } catch (EvaluationException $exception) {
+            if (($ast['callee']['type'] ?? null) !== 'parent_context' || $exception->jsonataCode !== 'S0217') {
+                throw $exception;
+            }
+
+            $this->throwNonFunctionCall($ast, $environment);
+        }
 
         if (! $callee instanceof Closure) {
-            throw new EvaluationException(
-                'Error T1006: Attempted to call a non-function value.',
-                'T1006'
-            );
+            $this->throwNonFunctionCall($ast, $environment);
         }
 
         $arguments = [];
@@ -1488,6 +1720,29 @@ class Evaluator
         }
 
         return $callee($arguments, $context);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     * @param  array<string, mixed>  $environment
+     */
+    private function throwNonFunctionCall(array $ast, array $environment): never
+    {
+        $bareCallee = ($ast['callee']['type'] ?? null) === 'identifier'
+            ? (string) ($ast['callee']['name'] ?? '')
+            : null;
+
+        if ($bareCallee !== null && $bareCallee !== '' && array_key_exists('$'.$bareCallee, $environment)) {
+            throw new EvaluationException(
+                sprintf('Error T1005: Attempted to invoke a non-function. Did you mean $%s?', $bareCallee),
+                'T1005'
+            );
+        }
+
+        throw new EvaluationException(
+            'Error T1006: Attempted to call a non-function value.',
+            'T1006'
+        );
     }
 
     /**
@@ -1783,7 +2038,9 @@ class Evaluator
             $results[] = $this->evaluateObjectLiteral($ast['object'], $item, $environment, $rootContext);
         }
 
-        return $this->collapseSequence($results);
+        return $this->hasArrayConstructorRoot($ast['target'])
+            ? array_values($results)
+            : $this->collapseSequence($results);
     }
 
     /**
@@ -1796,10 +2053,14 @@ class Evaluator
     {
         return match ($ast['type']) {
             'identifier' => $this->resolveTransformIdentifierPaths((string) $ast['name'], $root, $contextPath),
-            'grouping' => $this->resolveTransformPaths($ast['expression'], $root, $contextPath, $environment, $rootContext),
+            'grouping' => $this->normalizeTransformMatchPaths(
+                $this->resolveTransformPaths($ast['expression'], $root, $contextPath, $environment, $rootContext),
+                $root
+            ),
             'property' => $this->resolveTransformPropertyPaths($ast, $root, $contextPath, $environment, $rootContext),
             'wildcard' => $this->resolveTransformWildcardPaths($ast, $root, $contextPath, $environment, $rootContext),
             'descendant' => $this->resolveTransformDescendantPaths($ast, $root, $contextPath, $environment, $rootContext),
+            'descendant_context' => $this->descendantPaths($this->valueAtPath($root, $contextPath), $contextPath),
             'subscript' => $this->resolveTransformSubscriptPaths($ast, $root, $contextPath, $environment, $rootContext),
             'filter' => $this->resolveTransformFilterPaths($ast, $root, $contextPath, $environment, $rootContext),
             'sequence' => $this->resolveTransformSequencePaths($ast, $root, $contextPath, $environment, $rootContext),
@@ -1817,6 +2078,18 @@ class Evaluator
     private function resolveTransformIdentifierPaths(string $name, mixed &$root, array $contextPath): array
     {
         $contextValue = $this->valueAtPath($root, $contextPath);
+
+        if (is_array($contextValue) && array_is_list($contextValue)) {
+            $paths = [];
+
+            foreach ($contextValue as $index => $item) {
+                if (is_array($item) && array_key_exists($name, $item)) {
+                    $paths[] = [...$contextPath, $index, $name];
+                }
+            }
+
+            return $paths;
+        }
 
         if (! is_array($contextValue) || ! array_key_exists($name, $contextValue)) {
             return [];
@@ -1909,6 +2182,14 @@ class Evaluator
             return [];
         }
 
+        if (($ast['target']['type'] ?? null) === 'grouping') {
+            $resolvedIndex = $indexValue < 0 ? count($basePaths) + $indexValue : $indexValue;
+
+            return array_key_exists($resolvedIndex, $basePaths)
+                ? [$basePaths[$resolvedIndex]]
+                : [];
+        }
+
         foreach ($basePaths as $basePath) {
             $baseValue = $this->valueAtPath($root, $basePath);
             if (is_array($baseValue) && array_is_list($baseValue) && array_key_exists($indexValue, $baseValue)) {
@@ -1942,7 +2223,17 @@ class Evaluator
                 continue;
             }
 
-            if ($this->isTruthy($this->evaluateAst($ast['predicate'], $baseValue, $environment, $rootContext))) {
+            $predicate = $this->evaluateAst($ast['predicate'], $baseValue, $environment, $rootContext);
+
+            if (is_string($predicate)) {
+                if (is_array($baseValue) && ! array_is_list($baseValue) && array_key_exists($predicate, $baseValue)) {
+                    $paths[] = $basePath;
+                }
+
+                continue;
+            }
+
+            if ($this->isTruthy($predicate)) {
                 $paths[] = $basePath;
             }
         }
@@ -2173,6 +2464,12 @@ class Evaluator
         foreach ($paths as $path) {
             $value = $this->valueAtPath($root, $path);
 
+            if ($path === [] && $value === []) {
+                $normalized[] = $path;
+
+                continue;
+            }
+
             if (is_array($value) && array_is_list($value)) {
                 foreach (array_keys($value) as $index) {
                     $normalized[] = [...$path, $index];
@@ -2196,23 +2493,62 @@ class Evaluator
             return 0;
         }
 
-        if ($this->isMissing($left) || $left === null) {
+        if ($this->isMissing($left)) {
             return 1;
         }
 
-        if ($this->isMissing($right) || $right === null) {
+        if ($this->isMissing($right)) {
             return -1;
         }
 
-        if ((is_int($left) || is_float($left)) && (is_int($right) || is_float($right))) {
+        $leftIsNumber = is_int($left) || is_float($left);
+        $leftIsString = is_string($left);
+        $rightIsNumber = is_int($right) || is_float($right);
+        $rightIsString = is_string($right);
+
+        if ((! $leftIsNumber && ! $leftIsString) || (! $rightIsNumber && ! $rightIsString)) {
+            throw new EvaluationException(
+                'Error T2008: The expressions within an order-by clause must evaluate to numeric or string values',
+                'T2008'
+            );
+        }
+
+        if (($leftIsNumber && $rightIsString) || ($leftIsString && $rightIsNumber)) {
+            throw new EvaluationException(
+                sprintf(
+                    'Error T2007: Type mismatch when comparing values %s and %s in order-by clause',
+                    $this->stringify($left),
+                    $this->stringify($right)
+                ),
+                'T2007'
+            );
+        }
+
+        if ($leftIsNumber && $rightIsNumber) {
             return $left <=> $right;
         }
 
-        return strcmp($this->stringify($left), $this->stringify($right));
+        return strcmp($left, $right);
     }
 
     private function compareValues(mixed $left, mixed $right): bool
     {
+        if ($this->isMissing($left) || $this->isMissing($right)) {
+            return false;
+        }
+
+        if ($this->isTupleSequence($left) && $this->isTupleSequence($right)) {
+            foreach ($left as $leftItem) {
+                foreach ($right as $rightItem) {
+                    if ($this->deepEquals($this->unwrapTuples($leftItem), $this->unwrapTuples($rightItem))) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         $left = $this->normalizePreservingMissingPublic($left);
         $right = $this->normalizePreservingMissingPublic($right);
 
@@ -2273,6 +2609,21 @@ class Evaluator
         return $left === $right;
     }
 
+    private function isTupleSequence(mixed $value): bool
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if ($this->isTuple($item)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function compareNumbers(mixed $left, mixed $right, string $operator): bool
     {
         $left = $this->normalizePreservingMissingPublic($left);
@@ -2328,10 +2679,10 @@ class Evaluator
 
     private function evaluateNumericBinary(mixed $left, mixed $right, string $operator): mixed
     {
-        $left = $this->normalizeValuePublic($left);
-        $right = $this->normalizeValuePublic($right);
+        $left = $this->normalizePreservingMissingPublic($left);
+        $right = $this->normalizePreservingMissingPublic($right);
 
-        if ($this->isMissing($left) || $left === null) {
+        if ($this->isMissing($left)) {
             return $this->missingValue;
         }
 
@@ -2349,7 +2700,7 @@ class Evaluator
             );
         }
 
-        if ($this->isMissing($right) || $right === null) {
+        if ($this->isMissing($right)) {
             return $this->missingValue;
         }
 
@@ -2598,17 +2949,94 @@ class Evaluator
         );
     }
 
-    /**
-     * @return array<int, int>
-     */
-    private function buildRange(mixed $left, mixed $right): array
+    private function buildRange(mixed $left, mixed $right): mixed
     {
-        $start = (int) $this->toNumber($left);
-        $end = (int) $this->toNumber($right);
+        $bounds = $this->rangeBounds($left, $right);
 
-        return $start <= $end
-            ? range($start, $end)
-            : range($start, $end, -1);
+        if ($bounds === null) {
+            return $this->missingValue;
+        }
+
+        [$start, $end] = $bounds;
+
+        return range($start, $end);
+    }
+
+    /**
+     * @param  array<string, mixed>  $ast
+     */
+    private function isRangeCountChain(array $ast): bool
+    {
+        return ($ast['left']['type'] ?? null) === 'array'
+            && count($ast['left']['items'] ?? []) === 1
+            && ($ast['left']['items'][0]['type'] ?? null) === 'binary'
+            && ($ast['left']['items'][0]['operator'] ?? null) === '..'
+            && ($ast['right']['type'] ?? null) === 'call'
+            && ($ast['right']['callee']['type'] ?? null) === 'variable'
+            && ($ast['right']['callee']['name'] ?? null) === '$count'
+            && ($ast['right']['arguments'] ?? []) === [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $range
+     * @param  array<string, mixed>  $environment
+     */
+    private function evaluateRangeCountChain(array $range, mixed $context, array &$environment, mixed $rootContext): int
+    {
+        $bounds = $this->rangeBounds(
+            $this->evaluateAst($range['left'], $context, $environment, $rootContext),
+            $this->evaluateAst($range['right'], $context, $environment, $rootContext)
+        );
+
+        if ($bounds === null) {
+            return 0;
+        }
+
+        return $bounds[1] - $bounds[0] + 1;
+    }
+
+    /**
+     * @return array{int, int}|null
+     */
+    private function rangeBounds(mixed $left, mixed $right): ?array
+    {
+        $start = $this->rangeEndpoint($left, 'left');
+        $end = $this->rangeEndpoint($right, 'right');
+
+        if ($start === null || $end === null || $start > $end) {
+            return null;
+        }
+
+        $size = $end - $start + 1;
+        if ($size > 1e7) {
+            throw new EvaluationException(
+                sprintf('Error D2014: The size of the sequence allocated by the range operator (..) must not exceed 1e6.  Attempted to allocate %d.', $size),
+                'D2014'
+            );
+        }
+
+        return [$start, $end];
+    }
+
+    private function rangeEndpoint(mixed $value, string $side): ?int
+    {
+        $value = $this->normalizePreservingMissingPublic($value);
+
+        if ($this->isMissing($value)) {
+            return null;
+        }
+
+        if (! is_int($value) && (! is_float($value) || floor($value) !== $value)) {
+            $code = $side === 'left' ? 'T2003' : 'T2004';
+            $label = $side === 'left' ? 'left' : 'right';
+
+            throw new EvaluationException(
+                sprintf('Error %s: The %s side of the range operator (..) must evaluate to an integer', $code, $label),
+                $code
+            );
+        }
+
+        return (int) $value;
     }
 
     /**
@@ -2617,23 +3045,86 @@ class Evaluator
      */
     private function evaluateBind(array $ast, mixed $context, array &$environment, mixed $rootContext): mixed
     {
-        $items = $this->toSequence($this->evaluateAst($ast['target'], $context, $environment, $rootContext));
+        $target = $this->evaluateAst($ast['target'], $context, $environment, $rootContext);
+        $items = (($ast['target']['type'] ?? null) === 'property' && ($ast['target']['name'] ?? null) === '$')
+            ? [$target]
+            : $this->pathInputSequence($target);
         $results = [];
 
-        foreach ($items as $index => $item) {
-            $bindings = $this->isTuple($item) ? $this->tupleBindings($item) : [];
-            $value = $this->tupleValue($item);
-            $bindings[(string) $ast['name']] = $ast['kind'] === 'focus' ? $value : $index;
+        foreach ($this->bindingGroups($items, (string) $ast['kind'], $ast['target']) as $group) {
+            foreach ($group as $index => $item) {
+                $bindings = $this->isTuple($item) ? $this->tupleBindings($item) : [];
+                $value = $this->tupleValue($item);
+                $bindings[(string) $ast['name']] = $ast['kind'] === 'focus' ? $value : $index;
 
-            $results[] = $this->makeTuple(
-                $value,
-                $bindings,
-                $this->tupleParent($item),
-                $ast['kind'] === 'focus' && $this->isTuple($item) ? $this->tupleParent($item) : null
-            );
+                $results[] = $this->makeTuple(
+                    $value,
+                    $bindings,
+                    $this->tupleParent($item),
+                    $ast['kind'] === 'focus' && $this->isTuple($item)
+                        ? $this->tupleParent($item)
+                        : $this->tupleLookupParent($item),
+                    $ast['kind'] === 'focus' ? null : $this->tupleParentContextParent($item)
+                );
+            }
         }
 
         return $this->collapseSequence($results);
+    }
+
+    /**
+     * @param  array<int, mixed>  $items
+     * @return array<int, array<int, mixed>>
+     */
+    private function bindingGroups(array $items, string $kind, array $target): array
+    {
+        if ($kind !== 'index') {
+            return [$items];
+        }
+
+        if (in_array($target['type'] ?? null, ['filter', 'subscript', 'sort'], true)) {
+            return [$items];
+        }
+
+        $excludedBinding = (($target['type'] ?? null) === 'bind' && ($target['kind'] ?? null) === 'focus')
+            ? (string) ($target['name'] ?? '')
+            : null;
+
+        $groups = [];
+        $currentGroup = [];
+        $currentKey = null;
+        $hasCurrentKey = false;
+
+        foreach ($items as $item) {
+            $bindings = $this->tupleBindings($item);
+            if ($excludedBinding !== null && $excludedBinding !== '') {
+                unset($bindings[$excludedBinding]);
+            }
+
+            $key = $this->isTuple($item)
+                ? serialize([$this->tupleParent($item), $bindings])
+                : '__jsonata_scalar_sequence';
+
+            if ($hasCurrentKey && $key === $currentKey) {
+                $currentGroup[] = $item;
+
+                continue;
+            }
+
+            if ($currentGroup !== []) {
+                $groups[] = $currentGroup;
+            }
+
+            $currentGroup = [$item];
+            $currentKey = $key;
+            $hasCurrentKey = true;
+        }
+
+        if ($currentGroup !== []) {
+            $groups[] = $currentGroup;
+        }
+
+        return $groups;
     }
 
     /**

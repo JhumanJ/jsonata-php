@@ -2,6 +2,7 @@
 
 namespace JsonataPhp\Builtins;
 
+use JsonataPhp\EvaluationException;
 use JsonataPhp\Evaluator;
 
 trait RegistersEncodingBuiltins
@@ -16,33 +17,69 @@ trait RegistersEncodingBuiltins
             $this->builtin('base64decode', function (array $arguments) use ($evaluator): string {
                 return base64_decode($evaluator->stringifyPublic($arguments[0] ?? ''), true) ?: '';
             }, '<s-:s>'),
-            $this->builtin('encodeUrlComponent', fn (array $arguments): string => rawurlencode($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),
-            $this->builtin('decodeUrlComponent', fn (array $arguments): string => rawurldecode($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),
-            $this->builtin('encodeUrl', function (array $arguments) use ($evaluator): string {
-                $encoded = rawurlencode($evaluator->stringifyPublic($arguments[0] ?? ''));
-
-                return strtr($encoded, [
-                    '%3A' => ':',
-                    '%2F' => '/',
-                    '%3F' => '?',
-                    '%23' => '#',
-                    '%5B' => '[',
-                    '%5D' => ']',
-                    '%40' => '@',
-                    '%21' => '!',
-                    '%24' => '$',
-                    '%26' => '&',
-                    '%27' => '\'',
-                    '%28' => '(',
-                    '%29' => ')',
-                    '%2A' => '*',
-                    '%2B' => '+',
-                    '%2C' => ',',
-                    '%3B' => ';',
-                    '%3D' => '=',
-                ]);
+            $this->builtin('encodeUrlComponent', function (array $arguments) use ($evaluator): string {
+                return $this->encodeUrlString($evaluator->stringifyPublic($arguments[0] ?? ''), 'encodeUrlComponent', true);
             }, '<s-:s>'),
-            $this->builtin('decodeUrl', fn (array $arguments): string => rawurldecode($evaluator->stringifyPublic($arguments[0] ?? '')), '<s-:s>'),
+            $this->builtin('decodeUrlComponent', function (array $arguments) use ($evaluator): string {
+                return $this->decodeUrlString($evaluator->stringifyPublic($arguments[0] ?? ''), 'decodeUrlComponent');
+            }, '<s-:s>'),
+            $this->builtin('encodeUrl', function (array $arguments) use ($evaluator): string {
+                return $this->encodeUrlString($evaluator->stringifyPublic($arguments[0] ?? ''), 'encodeUrl', false);
+            }, '<s-:s>'),
+            $this->builtin('decodeUrl', function (array $arguments) use ($evaluator): string {
+                return $this->decodeUrlString($evaluator->stringifyPublic($arguments[0] ?? ''), 'decodeUrl');
+            }, '<s-:s>'),
         ];
+    }
+
+    private function encodeUrlString(string $value, string $functionName, bool $component): string
+    {
+        if (! mb_check_encoding($value, 'UTF-8')) {
+            throw new EvaluationException(
+                sprintf('Error D3140: Malformed URL passed to $%s(): "%s"', $functionName, $value),
+                'D3140'
+            );
+        }
+
+        $encoded = rawurlencode($value);
+
+        if ($component) {
+            return $encoded;
+        }
+
+        return strtr($encoded, [
+            '%3A' => ':',
+            '%2F' => '/',
+            '%3F' => '?',
+            '%23' => '#',
+            '%5B' => '[',
+            '%5D' => ']',
+            '%40' => '@',
+            '%21' => '!',
+            '%24' => '$',
+            '%26' => '&',
+            '%27' => '\'',
+            '%28' => '(',
+            '%29' => ')',
+            '%2A' => '*',
+            '%2B' => '+',
+            '%2C' => ',',
+            '%3B' => ';',
+            '%3D' => '=',
+        ]);
+    }
+
+    private function decodeUrlString(string $value, string $functionName): string
+    {
+        $decoded = rawurldecode($value);
+
+        if (! mb_check_encoding($decoded, 'UTF-8')) {
+            throw new EvaluationException(
+                sprintf('Error D3140: Malformed URL passed to $%s(): "%s"', $functionName, $value),
+                'D3140'
+            );
+        }
+
+        return $decoded;
     }
 }

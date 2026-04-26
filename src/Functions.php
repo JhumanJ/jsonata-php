@@ -12,6 +12,7 @@ use JsonataPhp\Builtins\RegistersMetaBuiltins;
 use JsonataPhp\Builtins\RegistersNumericBuiltins;
 use JsonataPhp\Builtins\RegistersObjectBuiltins;
 use JsonataPhp\Builtins\RegistersStringBuiltins;
+use JsonataPhp\Formatters\DateTimeFormatter;
 use JsonataPhp\Formatters\IntegerFormatter;
 use JsonataPhp\Formatters\NumberFormatter;
 use ReflectionFunction;
@@ -282,21 +283,18 @@ class Functions
         return $regex->toPcre();
     }
 
-    protected function toMillis(string $value): int
+    protected function toMillis(string $value, ?string $picture = null): ?int
     {
-        try {
-            $date = new \DateTimeImmutable($value, new \DateTimeZone('UTC'));
-        } catch (\Exception) {
-            throw new EvaluationException(
-                'Error D3110: The timestamp could not be parsed.',
-                'D3110'
-            );
+        $formatter = new DateTimeFormatter($this->integerFormatter);
+
+        if ($picture !== null && $picture !== '') {
+            return $formatter->parseMillis($value, $picture);
         }
 
-        return ((int) $date->format('U')) * 1000 + (int) $date->format('v');
+        return $formatter->parseIsoMillis($value);
     }
 
-    protected function fromMillis(int $millis, ?string $picture = null, ?string $timezone = null): string
+    protected function fromMillis(int $millis, ?string $picture = null, ?string $timezone = null): ?string
     {
         $seconds = intdiv($millis, 1000);
         $milliseconds = $millis % 1000;
@@ -318,19 +316,14 @@ class Functions
         $date = $date->setTimezone(new \DateTimeZone($timezone));
 
         if ($picture === null || $picture === '') {
+            if (! in_array($timezone, ['UTC', '+00:00'], true)) {
+                return $date->format('Y-m-d\TH:i:s.vP');
+            }
+
             return $date->format('Y-m-d\TH:i:s.v\Z');
         }
 
-        return strtr($picture, [
-            '[Y0001]' => $date->format('Y'),
-            '[M01]' => $date->format('m'),
-            '[D01]' => $date->format('d'),
-            '[H01]' => $date->format('H'),
-            '[h01]' => $date->format('h'),
-            '[m01]' => $date->format('i'),
-            '[s01]' => $date->format('s'),
-            '[f001]' => $date->format('v'),
-        ]);
+        return (new DateTimeFormatter($this->integerFormatter))->format($date, $picture, $timezone);
     }
 
     protected function formatNumber(int|float $value, string $picture): string
@@ -454,6 +447,10 @@ class Functions
 
     protected function normalizeTimezone(string $timezone): string
     {
+        if ($timezone === '0000') {
+            return '+00:00';
+        }
+
         if (preg_match('/^[+-]\d{4}$/', $timezone) === 1) {
             return substr($timezone, 0, 3).':'.substr($timezone, 3, 2);
         }

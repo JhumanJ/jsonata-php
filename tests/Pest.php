@@ -82,10 +82,114 @@ function jsonata_test_upstream_datasets(): array
     $datasets = [];
 
     foreach (glob($upstream.'/test-suite/datasets/*.json') ?: [] as $path) {
-        $datasets[basename($path, '.json')] = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        $datasets[basename($path, '.json')] = jsonata_test_decode_upstream_json_file($path);
     }
 
     return $datasets;
+}
+
+function jsonata_test_decode_upstream_json_file(string $path): mixed
+{
+    $contents = file_get_contents($path);
+
+    try {
+        return json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        if (! str_contains($exception->getMessage(), 'Single unpaired UTF-16 surrogate')) {
+            throw $exception;
+        }
+    }
+
+    $surrogates = [];
+    $placeholderBase = 0xE000;
+    $sanitized = preg_replace_callback(
+        '/\\\\u([0-9a-fA-F]{4})/',
+        static function (array $match) use ($contents, &$surrogates, $placeholderBase): string {
+            $codeUnit = hexdec($match[1][0]);
+
+            if ($codeUnit < 0xD800 || $codeUnit > 0xDFFF) {
+                return $match[0][0];
+            }
+
+            $offset = $match[0][1];
+            $paired = false;
+
+            if ($codeUnit >= 0xD800 && $codeUnit <= 0xDBFF) {
+                $nextEscape = substr($contents, $offset + 6, 6);
+                $paired = preg_match('/^\\\\u[dD][c-fC-F][0-9a-fA-F]{2}$/', $nextEscape) === 1;
+            } else {
+                $previousEscape = $offset >= 6 ? substr($contents, $offset - 6, 6) : '';
+                $paired = preg_match('/^\\\\u[dD][89a-bA-B][0-9a-fA-F]{2}$/', $previousEscape) === 1;
+            }
+
+            if ($paired) {
+                return $match[0][0];
+            }
+
+            $placeholder = sprintf('\\u%04X', $placeholderBase + count($surrogates));
+            $surrogates[$placeholder] = jsonata_test_utf16_surrogate_to_invalid_utf8($codeUnit);
+
+            return $placeholder;
+        },
+        $contents,
+        -1,
+        $count,
+        PREG_OFFSET_CAPTURE
+    );
+
+    $decoded = json_decode($sanitized ?? $contents, true, 512, JSON_THROW_ON_ERROR);
+
+    if ($surrogates === []) {
+        return $decoded;
+    }
+
+    $replacements = [];
+    foreach (array_values($surrogates) as $index => $value) {
+        $replacements[mb_chr($placeholderBase + $index, 'UTF-8')] = $value;
+    }
+
+    return jsonata_test_replace_strings_recursive($decoded, $replacements);
+}
+
+function jsonata_test_utf16_surrogate_to_invalid_utf8(int $codeUnit): string
+{
+    return chr(0xE0 | ($codeUnit >> 12))
+        .chr(0x80 | (($codeUnit >> 6) & 0x3F))
+        .chr(0x80 | ($codeUnit & 0x3F));
+}
+
+/**
+ * @param  array<string, string>  $replacements
+ */
+function jsonata_test_replace_strings_recursive(mixed $value, array $replacements): mixed
+{
+    if (is_string($value)) {
+        return strtr($value, $replacements);
+    }
+
+    if (! is_array($value)) {
+        return $value;
+    }
+
+    foreach ($value as $key => $item) {
+        $value[$key] = jsonata_test_replace_strings_recursive($item, $replacements);
+    }
+
+    return $value;
+}
+
+function jsonata_test_expression_for_local_js(string $expression): string
+{
+    return preg_replace_callback(
+        '/\xED[\xA0-\xBF][\x80-\xBF]/',
+        static function (array $match): string {
+            $bytes = array_map('ord', str_split($match[0]));
+            $codeUnit = (($bytes[0] & 0x0F) << 12) | (($bytes[1] & 0x3F) << 6) | ($bytes[2] & 0x3F);
+
+            return sprintf('\\u%04X', $codeUnit);
+        },
+        $expression
+    ) ?? $expression;
 }
 
 /**
@@ -114,7 +218,7 @@ function jsonata_test_upstream_cases(?array $groups = null, array $allowedCases 
             $caseId = $group.'/'.basename($path);
 
             try {
-                $decoded = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+                $decoded = jsonata_test_decode_upstream_json_file($path);
             } catch (JsonException $exception) {
                 if ($allowedCases === [] || in_array($caseId, $allowedCases, true)) {
                     $fixtures[$caseId] = [
@@ -211,7 +315,7 @@ JS;
         '-e',
         $script,
         $jsonataPath ?? package_path('node_modules/jsonata/jsonata.js'),
-        $expression,
+        jsonata_test_expression_for_local_js($expression),
         json_encode($context, JSON_THROW_ON_ERROR),
         json_encode($bindings, JSON_THROW_ON_ERROR),
     ], package_path('.'));

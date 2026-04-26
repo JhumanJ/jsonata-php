@@ -69,7 +69,7 @@ class Lexer
                 continue;
             }
 
-            if (in_array($character, ['=', '&', '+', '-', '*', '/', '%', '<', '>', '^', '|', '@', '#'], true)) {
+            if (in_array($character, ['=', '&', '+', '-', '*', '/', '%', '<', '>', '^', '|', '@', '#', '!'], true)) {
                 $token = [
                     'type' => 'operator',
                     'value' => $character,
@@ -111,7 +111,7 @@ class Lexer
                 continue;
             }
 
-            if ($character === '$' || ctype_alpha($character) || $character === '_') {
+            if ($character === '$' || $this->isIdentifierStartCharacter($this->readCharacter($expression, $offset))) {
                 $token = $this->readIdentifierToken($expression, $offset);
                 $tokens[] = $token;
                 $previousToken = $token;
@@ -260,7 +260,30 @@ class Lexer
             $offset++;
         }
 
-        throw $this->syntaxError('Unterminated string literal.', $position);
+        if ($quote === '`') {
+            throw new EvaluationException(
+                'Error S0105: Quoted property name must be terminated with a backquote (`)',
+                'S0105',
+                $length + 1,
+                ['position' => $length + 1]
+            );
+        }
+
+        if ($position > 1 && preg_match('/[A-Za-z0-9_$]/', $expression[$position - 2]) === 1) {
+            throw new EvaluationException(
+                sprintf('Error S0202: Expected ")", got "%s"', substr($expression, $position - 2)),
+                'S0202',
+                $position,
+                ['position' => $position]
+            );
+        }
+
+        throw new EvaluationException(
+            'Error S0101: String literal must be terminated by a matching quote',
+            'S0101',
+            $length + 1,
+            ['position' => $length + 1]
+        );
     }
 
     private function readEscapedCharacter(string $expression, int &$offset, int $stringPosition): string
@@ -403,14 +426,14 @@ class Lexer
         $length = strlen($expression);
 
         while ($offset < $length) {
-            $character = $expression[$offset];
+            $character = $this->readCharacter($expression, $offset);
 
-            if (! preg_match('/[A-Za-z0-9_$]/', $character)) {
+            if (! $this->isIdentifierPartCharacter($character)) {
                 break;
             }
 
             $buffer .= $character;
-            $offset++;
+            $offset += strlen($character);
         }
 
         return match ($buffer) {
@@ -424,6 +447,29 @@ class Lexer
                 'position' => $position,
             ],
         };
+    }
+
+    private function readCharacter(string $expression, int $offset): string
+    {
+        $character = $expression[$offset];
+
+        if (ord($character) < 0x80) {
+            return $character;
+        }
+
+        preg_match('/./us', substr($expression, $offset), $match);
+
+        return $match[0] ?? $character;
+    }
+
+    private function isIdentifierStartCharacter(string $character): bool
+    {
+        return preg_match('/^(?:[$_]|\p{L})$/u', $character) === 1;
+    }
+
+    private function isIdentifierPartCharacter(string $character): bool
+    {
+        return preg_match('/^(?:[$_]|\p{L}|\p{N}|\p{Mn}|\p{Mc})$/u', $character) === 1;
     }
 
     private function syntaxError(string $message, int $position): EvaluationException

@@ -62,11 +62,16 @@ trait RegistersNumericBuiltins
                 return $result;
             }, '<n-n:n>'),
             $this->builtin('random', fn (): float => lcg_value(), '<:n>'),
-            $this->builtin('formatNumber', function (array $arguments): string {
-                $value = $this->toNumber($arguments[0] ?? null);
-                $picture = (string) ($arguments[1] ?? '');
+            $this->builtin('formatNumber', function (array $arguments): ?string {
+                if (! array_key_exists(0, $arguments) || $arguments[0] === null) {
+                    return null;
+                }
 
-                return $this->numberFormatter->format($value, $picture);
+                $value = $this->toNumber($arguments[0]);
+                $picture = (string) ($arguments[1] ?? '');
+                $options = is_array($arguments[2] ?? null) ? $arguments[2] : [];
+
+                return $this->numberFormatter->format($value, $picture, $options);
             }, '<n-so?:s>'),
             $this->builtin('formatBase', function (array $arguments): string {
                 $value = (int) round($this->toNumber($arguments[0] ?? null));
