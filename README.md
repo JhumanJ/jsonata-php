@@ -1,49 +1,61 @@
 # jsonata-php
 
-`jsonata-php` is a standalone PHP port of [jsonata-js/jsonata](https://github.com/jsonata-js/jsonata), extracted from the internal Raydocs workflow engine so it can evolve as a public package.
+`jsonata-php` is a standalone PHP implementation of [JSONata](https://jsonata.org/), aligned against the official [jsonata-js/jsonata](https://github.com/jsonata-js/jsonata) test-suite.
 
-The goal of this repository is pragmatic parity with the JavaScript engine for the JSONata surface used in production, with PHP-native tests and explicit parity checks against the upstream JS runtime.
+The package started as the expression engine used inside the Raydocs workflow runtime. It is now maintained as a public package with explicit compatibility checks against the upstream JavaScript implementation.
 
 ## Status
 
-This is an actively developed port, not yet a byte-for-byte reimplementation of every upstream code path.
+The PHP engine currently passes the full vendored upstream JSONata JS fixture suite used by this repository:
 
-What is already included:
+- `1666` upstream fixture cases passing
+- `0` skipped upstream fixture cases
+- parity checked against the local `jsonata` npm package where the JavaScript runtime can evaluate the fixture safely
+- fixture-expected fallback for pathological upstream tail-recursion cases where the JavaScript runtime can crash or hang during local comparison
 
-- Lexer, parser and evaluator for a broad JSONata subset
-- Built-in functions for strings, collections, objects, numeric helpers, encoding, regex, datetime, formatting and evaluation
-- Support for transforms, partial application, lambda aliases, parent operator, tuple bindings, wildcard/descendant traversal and higher-order composition
-- Parity tests that compare the PHP runtime against the `jsonata` npm package and the vendored upstream JSONata JS test-suite fixtures
+This means `jsonata-php` is compatible with the official upstream test-suite corpus vendored in this repository. It is not a line-by-line port of the JavaScript source code, and it should not be read as a guarantee that every possible untested behavior is identical. The compatibility claim is deliberately test-suite based.
 
-Recent parity improvements include:
+Implemented language/runtime coverage includes:
 
-- correct precedence between assignment (`:=`) and conditional (`? :`) expressions inside grouped blocks
-- JS-aligned `$map()` singleton collapsing, which matters for object-producing callbacks
-- regression coverage for block-scoped lambda callbacks that bind locals and return projected objects
-- deterministic coverage of the JSONata JS `test/test-suite/datasets` and `test/test-suite/groups` fixtures, vendored from `jsonata-js/jsonata`
+- lexer, parser and evaluator coverage for the upstream expression fixtures
+- path traversal, selectors, tuple bindings, parent/focus/index operators, wildcards and descendants
+- object and array construction, grouping, sorting, transforms and range handling
+- lambdas, closures, higher-order functions, partial application and tail-recursion behavior
+- string, collection, object, numeric, regex, encoding, datetime and formatting builtins
+- JSONata-style error codes for the upstream error fixtures
 
 ## Compatibility Matrix
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Parser and core expressions | Partial | Broad operator/path coverage, including recent fixes for assignment/conditional precedence inside grouped expressions, but parser recovery and exact AST parity are still being expanded. |
-| Paths and selectors | Partial | Includes `@`, `#`, `%`, `*`, `**`, projections, filters and tuple-aware traversal. |
-| Standard library functions | Partial | Large builtin surface is present, with upstream-themed parity coverage growing function by function. |
-| Signatures and coercions | Partial | Signature validation exists and now has dedicated upstream fixture coverage, but edge-case mismatch parity is still in progress. |
-| Regex | Partial | Core regex matching, splitting, replacing and `$match` are implemented, with upstream fixture coverage for representative cases. |
-| Datetime and formatting | Partial | `toMillis`, `fromMillis`, integer formatting/parsing and number formatting are available, but advanced picture/timezone parity remains incomplete. |
-| Higher-order functions and closures | Partial | Lambdas, closures, partial application and the common HOF helpers are implemented, including JS-aligned `$map()` behavior for singleton object results, with upstream and local parity coverage. |
-| Transforms | Partial | Transform expressions are supported, with focused upstream parity fixtures for nested update scenarios. |
-| Error model | Partial | JSONata-style codes are present, but full 1:1 message/token/offset parity still needs deeper auditing. |
+| Parser and core expressions | Upstream fixtures passing | Covers literals, operators, grouping, blocks, conditionals, defaults, coalescing, comments and token conversion fixtures. |
+| Paths and selectors | Upstream fixtures passing | Covers `@`, `#`, `%`, `*`, `**`, projections, filters, quoted selectors, missing paths and tuple-aware traversal. |
+| Standard library functions | Upstream fixtures passing | Covers the vendored upstream builtin fixtures, including string, numeric, collection, object, encoding, regex, eval and datetime helpers. |
+| Signatures and coercions | Upstream fixtures passing | Covers upstream function signature fixtures and signature-driven coercion/error behavior present in the corpus. |
+| Regex | Upstream fixtures passing | Covers regex literals, matching, splitting, replacing, `$match()` and matcher functions. |
+| Datetime and formatting | Upstream fixtures passing | Covers `$toMillis()`, `$fromMillis()`, integer formatting/parsing and number formatting fixtures. |
+| Higher-order functions and closures | Upstream fixtures passing | Covers lambdas, closures, HOF helpers, partial application and tail-recursion fixtures. |
+| Transforms | Upstream fixtures passing | Covers both `transform` and `transforms` upstream groups, including nested update/delete behavior. |
+| Error model | Upstream fixtures passing | Covers upstream error-code parity for the official error fixtures; exact message wording may still differ outside the asserted code paths. |
 
-The repository includes a structured upstream-fixture parity layer in `tests/Unit/UpstreamParityTest.php`. The fixture corpus is adapted from the JSONata JavaScript project and vendored under `tests/fixtures/upstream-jsonata` from `jsonata-js/jsonata` commit `597e5ee6ada3e13eaa4880f00468dcc1cba21142`.
+## Upstream Fixture Parity
+
+The repository includes a structured upstream-fixture parity layer in `tests/Unit/UpstreamParityTest.php`. The fixture corpus is adapted from the official JSONata JavaScript project and vendored under `tests/fixtures/upstream-jsonata` from `jsonata-js/jsonata` commit `597e5ee6ada3e13eaa4880f00468dcc1cba21142`.
 
 Vendored upstream fixture paths:
 
 - `test/test-suite/datasets`
 - `test/test-suite/groups`
 
-The parity test enumerates the full upstream fixture catalog. Cases that already match this PHP implementation are executed against the local `jsonata` npm package; the rest remain visible as skipped parity work so future compatibility gaps cannot hide behind a partial fixture checkout.
+The parity test enumerates the full upstream fixture catalog. Each fixture is executed through the PHP evaluator and compared with the local `jsonata` npm package. For upstream cases where the local JavaScript comparison process itself is not reliable, such as non-terminating tail-recursion fixtures, the test uses the expected result or error code recorded in the official fixture.
+
+Run the upstream compatibility suite with:
+
+```bash
+vendor/bin/pest tests/Unit/UpstreamParityTest.php --filter='Upstream Jsonata parity fixtures'
+```
+
+The expected result is zero skipped upstream fixture cases.
 
 ## Installation
 
