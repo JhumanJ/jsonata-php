@@ -61,15 +61,21 @@ trait RegistersCollectionBuiltins
                 return $evaluator->collapseSequence($results);
             }, '<af>'),
             $this->builtin('count', fn (array $arguments): int => count($evaluator->toSequence($arguments[0] ?? null)), '<a:n>'),
-            $this->builtin('append', function (array $arguments) use ($evaluator, $preservesExplicitArray): mixed {
-                $result = [
-                    ...$evaluator->toSequence($arguments[0] ?? null),
-                    ...$evaluator->toSequence($arguments[1] ?? null),
-                ];
+            $this->builtin('append', function (array $arguments) use ($evaluator): mixed {
+                [$left, $right] = $arguments;
 
-                return $result === [] && $preservesExplicitArray($arguments)
-                    ? []
-                    : $evaluator->collapseSequence($result);
+                if ($evaluator->isMissing($left)) {
+                    return $right;
+                }
+
+                if ($evaluator->isMissing($right)) {
+                    return $left;
+                }
+
+                $left = is_array($left) && array_is_list($left) ? $left : [$left];
+                $right = is_array($right) && array_is_list($right) ? $right : [$right];
+
+                return [...$left, ...$right];
             }, '<xx:a>'),
             $this->builtin('reverse', function (array $arguments) use ($evaluator, $collapseCollection): mixed {
                 $result = array_reverse($evaluator->toSequence($arguments[0] ?? null));

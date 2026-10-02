@@ -24,6 +24,11 @@ Implemented language/runtime coverage includes:
 - string, collection, object, numeric, regex, encoding, datetime and formatting builtins
 - JSONata-style error codes for the upstream error fixtures
 
+Additional regression coverage checks that `$append()` preserves empty and singleton
+arrays, retains explicit `null` elements, and ignores missing arguments like the
+JavaScript engine. This includes object-valued singleton results used in workflow
+payloads.
+
 ## Compatibility Matrix
 
 | Area | Status | Notes |
