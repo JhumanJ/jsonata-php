@@ -98,7 +98,7 @@ class Functions
             foreach ($input as $item) {
                 $value = $this->lookupValue($item, $key, $evaluator);
 
-                if ($value === null || $evaluator->isMissing($value)) {
+                if ($evaluator->isMissing($value)) {
                     continue;
                 }
 
@@ -111,14 +111,14 @@ class Functions
                 }
             }
 
-            return $values === [] ? null : $evaluator->collapseSequence($values);
+            return $evaluator->collapseSequence($values);
         }
 
         if (is_array($input) && array_key_exists($key, $input)) {
             return $input[$key];
         }
 
-        return null;
+        return $evaluator->missingValuePublic();
     }
 
     protected function keysOf(mixed $input): mixed
