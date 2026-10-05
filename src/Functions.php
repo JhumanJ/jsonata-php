@@ -121,10 +121,10 @@ class Functions
         return null;
     }
 
-    protected function keysOf(mixed $input): mixed
+    protected function keysOf(mixed $input, Evaluator $evaluator): mixed
     {
         if (! is_array($input)) {
-            return null;
+            return $evaluator->missingValuePublic();
         }
 
         if (array_is_list($input)) {
@@ -140,14 +140,10 @@ class Functions
                 }
             }
 
-            $result = array_keys($keys);
-
-            return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
+            return $evaluator->collapseSequence(array_keys($keys));
         }
 
-        $result = array_keys($input);
-
-        return $result === [] ? null : (count($result) === 1 ? $result[0] : $result);
+        return $evaluator->collapseSequence(array_keys($input));
     }
 
     /**
