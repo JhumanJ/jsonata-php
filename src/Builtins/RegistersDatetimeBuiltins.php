@@ -50,7 +50,13 @@ trait RegistersDatetimeBuiltins
 
                 return $this->integerFormatter->parse($value, $picture);
             }, '<s-s:n>'),
-            $this->builtin('now', fn (): string => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.v\Z')),
+            $this->builtin('now', function (array $arguments) use ($evaluator): ?string {
+                $picture = array_key_exists(0, $arguments) && ! $evaluator->isMissing($arguments[0]) ? (string) $arguments[0] : null;
+                $timezone = array_key_exists(1, $arguments) && ! $evaluator->isMissing($arguments[1]) ? (string) $arguments[1] : null;
+                $timezone = $timezone === '0000' ? '+0000' : $timezone;
+
+                return $this->fromMillis((int) floor(microtime(true) * 1000), $picture, $timezone);
+            }, '<s?s?:s>'),
             $this->builtin('millis', fn (): int => (int) floor(microtime(true) * 1000)),
         ];
     }
