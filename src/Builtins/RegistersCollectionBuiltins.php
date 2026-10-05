@@ -34,9 +34,6 @@ trait RegistersCollectionBuiltins
             $this->builtin('map', function (array $arguments) use ($evaluator): mixed {
                 [$sequence, $callback] = $arguments;
                 $items = $evaluator->toSequence($sequence);
-                if ($items === []) {
-                    return null;
-                }
 
                 $results = [];
                 foreach ($items as $index => $item) {
