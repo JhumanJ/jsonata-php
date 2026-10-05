@@ -277,6 +277,34 @@ function jsonata_upstream_theme_cases(string $theme): array
 /**
  * @return array<string, true>
  */
+/**
+ * Known cases where jsonata-php returns null and jsonata-js returns undefined, or the reverse.
+ * The undefined-vs-null check skips these cases. Remove an entry when its fix merges.
+ *
+ * @return array<string, string>
+ */
+function jsonata_upstream_known_undefined_divergences(): array
+{
+    return [
+        'conditionals/case005.json' => '$lookup() returns null for an absent key (PR #7)',
+        'function-lookup/case002.json' => '$lookup() returns null for an absent key (PR #7)',
+        'function-keys/case002.json' => '$keys() returns null for no keys (PR #11)',
+        'function-keys/case004.json' => '$keys() returns null for no keys (PR #11)',
+        'function-keys/case005.json' => '$keys() returns null for no keys (PR #11)',
+        'function-keys/case006.json' => '$keys() returns null for no keys (PR #11)',
+        'function-assert/case001.json' => '$assert() returns null instead of undefined (no PR yet)',
+        'function-assert/case007.json' => '$assert() returns null instead of undefined (no PR yet)',
+        'function-average/case003.json' => '$average([]) returns null (no PR yet)',
+        'function-max/case003.json' => '$max([]) returns null (no PR yet)',
+        'function-max/case017.json' => '$min([]) returns null (no PR yet)',
+        'function-tomillis/parseDateTime.json#1' => '$toMillis() returns null when the picture does not match (no PR yet)',
+        'function-tomillis/parseDateTime.json#34' => '$toMillis() returns null when the picture does not match (no PR yet)',
+        'function-typeOf/case001.json' => '$type() of an undefined value returns null (no PR yet)',
+        'function-distinct/distinct.json#3' => '$distinct(null) returns undefined instead of null (no PR yet)',
+        'descendent-operator/case016.json' => 'harness: the local JS run gets a null input, the upstream runner gets undefined',
+    ];
+}
+
 function jsonata_upstream_enabled_case_ids(): array
 {
     static $caseIds = null;
@@ -489,6 +517,12 @@ function jsonata_upstream_assert_case(ExpressionService $service, array $case): 
 
     expect(jsonata_upstream_normalize($php['result'] ?? null, $unordered))
         ->toEqual(jsonata_upstream_normalize($js['result'] ?? null, $unordered), $case['_case_id']);
+
+    if ($php['result'] === null && ! isset(jsonata_upstream_known_undefined_divergences()[$case['_case_id']])) {
+        // evaluate() returns null for both null and undefined, so $exists() tells them apart.
+        expect($service->evaluate('$exists(('.$case['expr'].'))', $input, $bindings))
+            ->toBe(($js['undefinedResult'] ?? false) !== true, $case['_case_id'].' :: undefined vs null');
+    }
 }
 
 describe('Upstream Jsonata parity fixtures', function () {
