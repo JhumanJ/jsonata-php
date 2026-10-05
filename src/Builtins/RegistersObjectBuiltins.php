@@ -22,10 +22,14 @@ trait RegistersObjectBuiltins
 
                 return $this->lookupValue($input, (string) $key, $evaluator);
             }, '<x-s:x>'),
-            $this->builtin('keys', fn (array $arguments): mixed => $this->keysOf($arguments[0] ?? null), '<x-:a<s>>'),
+            $this->builtin('keys', fn (array $arguments): mixed => $this->keysOf($arguments[0] ?? null, $evaluator), '<x-:a<s>>'),
             $this->builtin('merge', fn (array $arguments): array => $this->mergeObjects($evaluator->toSequence($arguments[0] ?? null)), '<a<o>:o>'),
-            $this->builtin('spread', function (array $arguments): mixed {
+            $this->builtin('spread', function (array $arguments) use ($evaluator): mixed {
                 $input = $arguments[0] ?? null;
+
+                if ($input === []) {
+                    return $evaluator->missingValuePublic();
+                }
 
                 if (is_array($input) && array_is_list($input)) {
                     $spread = [];
@@ -44,7 +48,9 @@ trait RegistersObjectBuiltins
                     return $spread;
                 }
 
-                return $this->spreadValue($input);
+                return is_array($input)
+                    ? $evaluator->collapseSequence($this->spreadValue($input))
+                    : $this->spreadValue($input);
             }, '<x-:x>'),
             $this->builtin('each', function (array $arguments) use ($evaluator): mixed {
                 $input = $arguments[0] ?? null;
