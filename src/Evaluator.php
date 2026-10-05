@@ -407,7 +407,7 @@ class Evaluator
 
         return match ($ast['operator']) {
             '=' => $this->compareValues($left, $right),
-            '!=' => ! $this->compareValues($left, $right),
+            '!=' => ! $this->isMissing($left) && ! $this->isMissing($right) && ! $this->compareValues($left, $right),
             '<' => $this->compareNumbers($left, $right, '<'),
             '<=' => $this->compareNumbers($left, $right, '<='),
             '>' => $this->compareNumbers($left, $right, '>'),
