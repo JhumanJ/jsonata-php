@@ -11,6 +11,8 @@ trait RegistersDatetimeBuiltins
      */
     protected function datetimeBuiltinDefinitions(Evaluator $evaluator, mixed $rootContext): array
     {
+        $timestamp = (int) floor(microtime(true) * 1000);
+
         return [
             $this->builtin('toMillis', function (array $arguments) use ($evaluator): ?int {
                 $value = $evaluator->stringifyPublic($arguments[0] ?? '');
@@ -50,8 +52,8 @@ trait RegistersDatetimeBuiltins
 
                 return $this->integerFormatter->parse($value, $picture);
             }, '<s-s:n>'),
-            $this->builtin('now', fn (): string => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.v\Z')),
-            $this->builtin('millis', fn (): int => (int) floor(microtime(true) * 1000)),
+            $this->builtin('now', fn (): string => $this->fromMillis($timestamp)),
+            $this->builtin('millis', fn (): int => $timestamp),
         ];
     }
 }
