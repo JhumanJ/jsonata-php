@@ -29,6 +29,10 @@ arrays, retains explicit `null` elements, and ignores missing arguments like the
 JavaScript engine. This includes object-valued singleton results used in workflow
 payloads.
 
+`$map()` over an empty input returns an undefined sequence, matching JavaScript.
+Wrapping it in an array constructor keeps `[]` rather than producing `[null]`;
+explicit `null` values returned by a callback are still preserved.
+
 ## Compatibility Matrix
 
 | Area | Status | Notes |
