@@ -35,7 +35,7 @@ trait RegistersCollectionBuiltins
                 [$sequence, $callback] = $arguments;
                 $items = $evaluator->toSequence($sequence);
                 if ($items === []) {
-                    return null;
+                    return $evaluator->missingValuePublic();
                 }
 
                 $results = [];
